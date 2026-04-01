@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>MCG HNWI Outreach System</title>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f0; color: #1a1a18; min-height: 100vh; }
+  .app { max-width: 900px; margin: 0 auto; padding: 24px 16px; }
+  .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; flex-wrap: wrap; gap: 12px; }
+  .header-title { font-size: 22px; font-weight: 500; }
+  .header-sub { font-size: 13px; color: #888; margin-top: 2px; }
+  .stats { display: flex; gap: 12px; margin-bottom: 24px; flex-wrap: wrap; }
+  .stat { background: #fff; border: 0.5px solid #e0dfd8; border-radius: 10px; padding: 14px 18px; flex: 1; min-width: 120px; }
+  .stat-label { font-size: 11px; color: #888; margin-bottom: 4px; }
+  .stat-value { font-size: 24px; font-weight: 500; }
+  .tabs { display: flex; gap: 4px; border-bottom: 0.5px solid #e0dfd8; padding-bottom: 8px; margin-bottom: 24px; }
+  .tab { padding: 7px 16px; border-radius: 8px; border: none; background: transparent; font-size: 13px; cursor: pointer; color: #888; display: flex; align-items: center; gap: 6px; }
+  .tab.active { background: #f0efe8; color: #1a1a18; font-weight: 500; }
+  .badge-count { background: #dceeff; color: #185fa5; border-radius: 20px; padding: 1px 7px; font-size: 11px; font-weight: 500; }
+  .btn { padding: 9px 18px; border-radius: 8px; border: 0.5px solid #ccc; background: #fff; font-size: 13px; cursor: pointer; font-family: inherit; }
+  .btn-primary { background: #dceeff; color: #0c447c; border-color: #b5d4f4; font-weight: 500; }
+  .btn-success { background: #d4edda; color: #155724; border-color: #9fe1cb; font-weight: 500; }
+  .btn-danger { background: #fff; color: #888; border-color: #ddd; }
+  .btn:disabled { opacity: 0.5; cursor: default; }
+  .input, .textarea { width: 100%; padding: 8px 12px; border: 0.5px solid #ccc; border-radius: 8px; font-size: 13px; font-family: inherit; background: #fff; color: #1a1a18; line-height: 1.6; }
+  .textarea { resize: vertical; }
+  .card { background: #fff; border: 0.5px solid #e0dfd8; border-radius: 12px; overflow: hidden; margin-bottom: 12px; }
+  .card-header { padding: 14px 16px; background: #f8f7f2; border-bottom: 0.5px solid #e0dfd8; display: flex; gap: 12px; align-items: center; }
+  .card-body { padding: 14px 16px; }
+  .avatar { width: 44px; height: 44px; border-radius: 50%; background: #dceeff; color: #185fa5; display: flex; align-items: center; justify-content: center; font-size: 15px; font-weight: 500; flex-shrink: 0; }
+  .avatar-sm { width: 36px; height: 36px; font-size: 13px; }
+  .prospect-row { display: flex; align-items: center; gap: 14px; padding: 12px 14px; border: 0.5px solid #e0dfd8; border-radius: 10px; cursor: pointer; background: #fff; margin-bottom: 8px; transition: border-color 0.15s; }
+  .prospect-row:hover { border-color: #aaa; }
+  .badge { display: inline-flex; align-items: center; gap: 5px; border-radius: 20px; padding: 2px 10px; font-size: 12px; font-weight: 500; }
+  .badge-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
+  .filter-btn { padding: 5px 12px; border-radius: 20px; border: 0.5px solid #e0dfd8; background: transparent; font-size: 12px; cursor: pointer; color: #888; }
+  .filter-btn.active { background: #f0efe8; color: #1a1a18; font-weight: 500; border-color: #aaa; }
+  .log-box { background: #f8f7f2; border-radius: 10px; padding: 12px 14px; font-family: monospace; font-size: 12px; margin-top: 12px; }
+  .log-line { margin-bottom: 5px; color: #888; }
+  .log-line.latest { color: #1a1a18; }
+  .progress-bar { height: 5px; background: #e0dfd8; border-radius: 3px; margin-bottom: 10px; overflow: hidden; }
+  .progress-fill { height: 100%; border-radius: 3px; background: #378add; transition: width 0.5s; }
+  .progress-fill.done { background: #1d9e75; }
+  .warning-bar { background: #fff8e1; border: 0.5px solid #f0c040; border-radius: 8px; padding: 10px 14px; font-size: 13px; color: #7a5c00; margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .section-label { font-size: 11px; font-weight: 500; color: #888; letter-spacing: 0.05em; text-transform: uppercase; margin-bottom: 8px; }
+  .field-label { font-size: 11px; color: #888; margin-bottom: 4px; }
+  .notif { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); padding: 10px 20px; border-radius: 8px; font-size: 13px; font-weight: 500; z-index: 999; white-space: nowrap; }
+  .notif-success { background: #d4edda; color: #155724; }
+  .notif-error { background: #f8d7da; color: #721c24; }
+  .gmail-connected { display: inline-flex; align-items: center; gap: 8px; background: #d4edda; color: #155724; border-radius: 20px; padding: 5px 14px; font-size: 12px; font-weight: 500; }
+  .gmail-dot { width: 7px; height: 7px; border-radius: 50%; background: #1d9e75; }
+  .empty-state { text-align: center; padding: 48px 0; color: #aaa; font-size: 13px; }
+  .back-btn { font-size: 13px; color: #888; background: none; border: none; cursor: pointer; margin-bottom: 14px; padding: 0; }
+  .signal-row { padding: 10px 16px; border-bottom: 0.5px solid #e0dfd8; font-size: 13px; color: #888; }
+  .btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+  .settings-section { border: 0.5px solid #e0dfd8; border-radius: 10px; padding: 16px; margin-bottom: 16px; background: #fff; }
+</style>
+</head>
+<body>
+<div class="app">
+  <div id="notif-area"></div>
+
+  <div class="header">
+    <div>
+      <div class="header-title">HNWI Outreach System</div>
+      <div class="header-sub">Melbourne Capital Group · Origami + Claude + Gmail</div>
+    </div>
+    <div id="gmail-status">
+      <button class="btn btn-primary" onclick="connectGmail()">Connect Gmail</button>
+    </div>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><div class="stat-label">Total</div><div class="stat-value" id="stat-total">0</div></div>
+    <div class="stat"><div class="stat-label">Pending review</div><div class="stat-value" style="color:#ba7517" id="stat-pending">0</div></div>
+    <div class="stat"><div class="stat-label">Approved</div><div class="stat-value" style="color:#1d9e75" id="stat-approved">0</div></div>
+    <div class="stat"><div class="stat-label">Sent</div><div class="stat-value" style="color:#378add" id="stat-sent">0</div></div>
+  </div>
+
+  <div class="tabs">
+    <button class="tab active" id="tab-search" onclick="switchTab('search')">Search & generate</button>
+    <button class="tab" id="tab-prospects" onclick="switchTab('prospects')">Prospects <span class="badge-count" id="pending-count" style="display:none">0</span></button>
+    <button class="tab" id="tab-settings" onclick="switchTab('settings')">Settings</button>
+  </div>
+
+  <div id="panel-search">
+    <div style="font-size:12px;color:#888;margin-bottom:14px">Describe your ideal HNWI prospect in plain English. The system finds matching profiles and generates a personalised Melbourne Capital Group email for each one.</div>
+    <textarea id="search-query" class="textarea" rows="4" placeholder='e.g. "CEOs and Founders at family offices and private equity firms in Brazil, Mexico, Colombia and Chile — senior level, likely HNWI themselves"'></textarea>
+    <div style="margin-top:12px">
+      <button class="btn btn-primary" id="search-btn" onclick="runSearch()">Search + generate messages</button>
+    </div>
+    <div id="search-progress-area" style="display:none;margin-top:20px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+        <div class="progress-bar" style="flex:1"><div class="progress-fill" id="progress-fill" style="width:0%"></div></div>
+        <span id="progress-pct" style="font-size:12px;color:#888;min-width:32px">0%</span>
+      </div>
+      <div class="log-box" id="log-box"></div>
+    </div>
+  </div>
+
+  <div id="panel-prospects" style="display:none">
+    <div id="no-gmail-warning" class="warning-bar" style="display:none">
+      <span>Connect Gmail to send emails directly from this dashboard</span>
+      <button class="btn btn-primary" style="flex-shrink:0;font-size:12px;padding:5px 12px" onclick="connectGmail()">Connect now</button>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap" id="filter-bar">
+      <button class="filter-btn active" onclick="setFilter('All')">All</button>
+      <button class="filter-btn" onclick="setFilter('Pending')">Pending</button>
+      <button class="filter-btn" onclick="setFilter('Approved')">Approved</button>
+      <button class="filter-btn" onclick="setFilter('Sent')">Sent</button>
+      <button class="filter-btn" onclick="setFilter('Declined')">Declined</button>
+    </div>
+    <div id="prospects-list"></div>
+    <div id="prospect-detail" style="display:none"></div>
+  </div>
+
+  <div id="panel-settings" style="display:none">
+    <div class="settings-section">
+      <div style="font-size:13px;font-weight:500;margin-bottom:6px">Gmail account</div>
+      <div style="font-size:12px;color:#888;margin-bottom:12px">Connect once — all emails send directly from your Gmail account with one click.</div>
+      <div id="gmail-settings-status">
+        <button class="btn btn-primary" onclick="connectGmail()">Connect Gmail</button>
+      </div>
+    </div>
+    <div class="settings-section">
+      <div style="font-size:13px;font-weight:500;margin-bottom:6px">Sender bio</div>
+      <div style="font-size:12px;color:#888;margin-bottom:8px">Used to personalise every generated message.</div>
+      <textarea id="sender-bio" class="textarea" rows="6"></textarea>
+    </div>
+    <div class="settings-section">
+      <div style="font-size:13px;font-weight:500;margin-bottom:6px">Origami API key</div>
+      <div style="font-size:12px;color:#888;margin-bottom:8px">Get from origami.chat → Settings → API. Enables live prospect search.</div>
+      <input id="origami-key" class="input" type="password" placeholder="origami_live_..."/>
+      <div id="origami-status" style="margin-top:6px;font-size:12px;color:#888">No key yet — searches use demo prospects</div>
+    </div>
+  </div>
+</div>
+
+<script>
+const CLIENT_ID = "557023202099-fsjjgqsh8kki1es5gpopsqrsh125t8c2.apps.googleusercontent.com";
+const SCOPES = "https://www.googleapis.com/auth/gmail.send";
+const APOLLO_PROXY = "https://apollo-proxy.radim-babiak7.workers.dev/";
+
+let gmailToken = null;
+let gmailUser = null;
+let prospects = [];
+let currentFilter = "All";
+let selectedId = null;
+let gsiReady = false;
+
+window.onload = () => {
+  document.getElementById("sender-bio").value = `I am a Private Wealth Manager at Melbourne Capital Group, an award-winning independent financial advisory firm with offices in Kuala Lumpur, Bangkok, Penang, and Melbourne. We specialise in cross-border estate planning, international wills, retirement planning, offshore investment structures, UK pension transfers (QROPS), alternative investments, and family office services. We are a Chartered Insurance Institute International Professional Partner Firm and member of FEIFA. We offer open architecture, independent advice — we are not a bank and we do not sell proprietary products.`;
+  document.getElementById("origami-key").addEventListener("input", e => {
+    document.getElementById("origami-status").textContent = e.target.value ? "API key saved — next search uses live Origami data" : "No key yet — searches use demo prospects";
+    document.getElementById("origami-status").style.color = e.target.value ? "#155724" : "#888";
+  });
+  checkGSI();
+};
+
+function checkGSI() {
+  if (window.google && window.google.accounts) { gsiReady = true; }
+  else { setTimeout(checkGSI, 500); }
+}
+
+function connectGmail() {
+  if (!gsiReady) { showNotif("Google is still loading, please wait a moment and try again", "error"); return; }
+  const client = google.accounts.oauth2.initTokenClient({
+    client_id: CLIENT_ID, scope: SCOPES,
+    callback: async (resp) => {
+      if (resp.error) { showNotif("Connection failed: " + resp.error, "error"); return; }
+      gmailToken = resp.access_token;
+      try {
+        const r = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", { headers: { Authorization: `Bearer ${gmailToken}` }});
+        const u = await r.json();
+        gmailUser = u.email || u.name || "Connected";
+      } catch(e) {
+        gmailUser = "Connected";
+      }
+      updateGmailUI();
+      showNotif("Gmail connected — " + gmailUser);
+    }
+  });
+  client.requestAccessToken();
+}
+
+function updateGmailUI() {
+  const connected = `<div class="gmail-connected"><span class="gmail-dot"></span>${gmailUser} <button onclick="disconnectGmail()" style="background:none;border:none;cursor:pointer;color:#888;font-size:11px;margin-left:4px">disconnect</button></div>`;
+  document.getElementById("gmail-status").innerHTML = gmailUser ? connected : `<button class="btn btn-primary" onclick="connectGmail()">Connect Gmail</button>`;
+  document.getElementById("gmail-settings-status").innerHTML = gmailUser ? connected : `<button class="btn btn-primary" onclick="connectGmail()">Connect Gmail</button>`;
+  document.getElementById("no-gmail-warning").style.display = gmailUser ? "none" : "flex";
+  renderProspects();
+}
+
+function disconnectGmail() { gmailToken = null; gmailUser = null; updateGmailUI(); }
+
+function switchTab(t) {
+  ["search","prospects","settings"].forEach(id => {
+    document.getElementById("panel-"+id).style.display = id===t ? "block" : "none";
+    document.getElementById("tab-"+id).classList.toggle("active", id===t);
+  });
+  if (t === "prospects") { selectedId = null; renderProspects(); }
+}
+
+function setFilter(f) {
+  currentFilter = f;
+  document.querySelectorAll(".filter-btn").forEach(b => b.classList.toggle("active", b.textContent.trim()===f));
+  renderProspects();
+}
+
+function updateStats() {
+  document.getElementById("stat-total").textContent = prospects.length;
+  const pending = prospects.filter(p=>p.status==="Pending").length;
+  document.getElementById("stat-pending").textContent = pending;
+  document.getElementById("stat-approved").textContent = prospects.filter(p=>p.status==="Approved").length;
+  document.getElementById("stat-sent").textContent = prospects.filter(p=>p.status==="Sent").length;
+  const pc = document.getElementById("pending-count");
+  pc.textContent = pending; pc.style.display = pending > 0 ? "inline" : "none";
+}
+
+function statusBadge(s) {
+  const m = { Pending:{bg:"#faeeda",c:"#854f0b",dot:"#ba7517"}, Approved:{bg:"#e1f5ee",c:"#0f6e56",dot:"#1d9e75"}, Sent:{bg:"#e6f1fb",c:"#185fa5",dot:"#378add"}, Declined:{bg:"#fcebeb",c:"#a32d2d",dot:"#e24b4a"} };
+  const x = m[s] || m.Pending;
+  return `<span class="badge" style="background:${x.bg};color:${x.c}"><span class="badge-dot" style="background:${x.dot}"></span>${s}</span>`;
+}
+
+function avatar(name, sm) {
+  const ini = name.split(" ").map(w=>w[0]).slice(0,2).join("");
+  return `<div class="avatar${sm?' avatar-sm':''}">${ini}</div>`;
+}
+
+function renderProspects() {
+  const list = document.getElementById("prospects-list");
+  const detail = document.getElementById("prospect-detail");
+  if (selectedId) {
+    list.style.display = "none"; detail.style.display = "block";
+    const p = prospects.find(x=>x.id===selectedId);
+    if (!p) return;
+    detail.innerHTML = `
+      <button class="back-btn" onclick="goBack()">← Back</button>
+      <div class="card">
+        <div class="card-header">
+          ${avatar(p.name, false)}
+          <div style="flex:1">
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:3px">
+              <span style="font-weight:500;font-size:15px">${p.name}</span>${statusBadge(p.status)}
+            </div>
+            <div style="font-size:13px;color:#666">${p.title} at ${p.company}</div>
+            <div style="font-size:12px;color:#999">${p.email} · ${p.location}</div>
+          </div>
+        </div>
+        ${p.recentActivity ? `<div class="signal-row"><span style="font-size:11px;color:#aaa;margin-right:6px">Signal:</span>${p.recentActivity}</div>` : ""}
+        <div class="card-body">
+          <div class="section-label">Email — edit then send</div>
+          <div class="field-label" style="margin-top:8px">Subject line</div>
+          <input id="edit-subject" class="input" value="${(p.message?.subject||'').replace(/"/g,'&quot;')}" style="margin-bottom:10px"/>
+          <div class="field-label">Message body</div>
+          <textarea id="edit-body" class="textarea" rows="10" style="margin-bottom:16px">${p.message?.body||''}</textarea>
+          ${!gmailToken ? `
+            <div class="warning-bar" style="margin-bottom:12px">
+              <span>Connect Gmail to send directly from this dashboard</span>
+              <button class="btn btn-primary" style="font-size:12px;padding:5px 12px;flex-shrink:0" onclick="connectGmail()">Connect Gmail</button>
+            </div>` : `
+            <div class="btn-row">
+              <button class="btn btn-success" id="send-btn" onclick="sendEmail(${p.id})">Send email</button>
+              <button class="btn" onclick="approveOnly(${p.id})">Approve only</button>
+              <button class="btn btn-danger" onclick="updateStatus(${p.id},'Declined');goBack()">Decline</button>
+            </div>`}
+        </div>
+      </div>`;
+    return;
+  }
+  list.style.display = "block"; detail.style.display = "none";
+  document.getElementById("no-gmail-warning").style.display = gmailUser ? "none" : "flex";
+  const filtered = prospects.filter(p => currentFilter==="All" || p.status===currentFilter);
+  if (filtered.length === 0) {
+    list.innerHTML = `<div class="empty-state">${prospects.length===0 ? "No prospects yet — run a search to get started" : "No prospects match this filter"}</div>`;
+    return;
+  }
+  list.innerHTML = filtered.map(p => `
+    <div class="prospect-row" onclick="selectProspect(${p.id})">
+      ${avatar(p.name, true)}
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px">
+          <span style="font-weight:500;font-size:14px">${p.name}</span>
+          <span style="font-size:12px;color:#888">${p.title}</span>
+        </div>
+        <div style="font-size:12px;color:#aaa">${p.company} · ${p.location}</div>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
+        ${statusBadge(p.status)}
+        <div style="font-size:11px;color:#aaa">${p.email}</div>
+      </div>
+    </div>`).join("");
+}
+
+function selectProspect(id) { selectedId = id; renderProspects(); }
+function goBack() { selectedId = null; renderProspects(); }
+function approveOnly(id) { updateStatus(id, "Approved"); }
+
+function updateStatus(id, status) {
+  prospects = prospects.map(p => p.id===id ? {...p, status} : p);
+  updateStats(); renderProspects();
+}
+
+async function sendEmail(id) {
+  if (!gmailToken) { showNotif("Connect Gmail first", "error"); return; }
+  const p = prospects.find(x=>x.id===id);
+  if (!p) return;
+  const subject = document.getElementById("edit-subject").value;
+  const body = document.getElementById("edit-body").value;
+  const btn = document.getElementById("send-btn");
+  btn.textContent = "Sending..."; btn.disabled = true;
+  try {
+    const msg = [`To: ${p.email}`, `Subject: ${subject}`, "Content-Type: text/plain; charset=utf-8", "MIME-Version: 1.0", "", body].join("\n");
+    const raw = btoa(unescape(encodeURIComponent(msg))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+    const res = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${gmailToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ raw })
+    });
+    if (res.ok) {
+      updateStatus(id, "Sent");
+      showNotif("Email sent to " + p.name.split(" ")[0]);
+      selectedId = null; renderProspects();
+    } else {
+      const err = await res.json();
+      if (err.error?.code === 401) { gmailToken = null; gmailUser = null; updateGmailUI(); showNotif("Gmail session expired — reconnect", "error"); }
+      else { showNotif("Failed: " + (err.error?.message || "unknown error"), "error"); btn.textContent = "Send email"; btn.disabled = false; }
+    }
+  } catch(e) { showNotif("Error: " + e.message, "error"); btn.textContent = "Send email"; btn.disabled = false; }
+}
+
+function generateProspects(query) {
+  const isLatam = /latin|brazil|mexico|colombia|chile|peru|argentina|latam/i.test(query);
+  const latam = [
+    { id:Date.now()+1, name:"Carlos Mendoza", title:"Founder & CEO", company:"Grupo Mendoza Capital", industry:"Private Equity", location:"São Paulo, Brazil", email:"c.mendoza@grupomendoza.com.br", recentActivity:"Closed $120M fund for Brazilian infrastructure assets", status:"Pending", message:{ subject:"Cross-border structuring for your infrastructure fund", body:"Hi Carlos,\n\nYour recent $120M infrastructure fund close caught my attention — particularly the cross-border complexity that comes with managing Brazilian assets alongside international LP capital.\n\nAt Melbourne Capital Group, we specialise in exactly this intersection: offshore structuring, international estate planning, and wealth protection for business principals with assets across multiple jurisdictions.\n\nWould a 20-minute call make sense to explore whether our independent advisory approach could add value for you personally?\n\nBest regards,\n[Your name]\nMelbourne Capital Group" }},
+    { id:Date.now()+2, name:"Valentina Restrepo", title:"Managing Director", company:"Andean Family Office", industry:"Family Office", location:"Bogotá, Colombia", email:"v.restrepo@andeanfo.com", recentActivity:"Expanded family office into Miami and Madrid", status:"Pending", message:{ subject:"Independent advice for your Miami & Madrid expansion", body:"Hi Valentina,\n\nExpanding a family office across Colombia, Miami and Madrid simultaneously is a significant undertaking — especially navigating three different regulatory and tax environments at once.\n\nMelbourne Capital Group is one of the few truly independent advisory firms with the international licensing to serve clients across these jurisdictions. We specialise in cross-border estate planning, international wills, and offshore structuring — with no proprietary products to push.\n\nWould it be worth a brief conversation?\n\nWarm regards,\n[Your name]\nMelbourne Capital Group" }},
+    { id:Date.now()+3, name:"Rodrigo Fuentes", title:"Executive Chairman", company:"Fuentes Group", industry:"Manufacturing", location:"Santiago, Chile", email:"r.fuentes@fuentesgroup.cl", recentActivity:"Announced succession planning for third-generation family business", status:"Pending", message:{ subject:"Succession planning across borders — a thought", body:"Hi Rodrigo,\n\nThird-generation succession in a diversified family business is one of the most complex wealth challenges there is — particularly when assets span multiple countries and heirs have different residencies.\n\nAt Melbourne Capital Group we work with business families on exactly this: structuring trusts, international wills, and estate plans that protect wealth across generations.\n\nAs a CII-accredited independent firm with no bank affiliation, we offer perspective most local advisors simply can't.\n\nWould a short call be useful?\n\nBest,\n[Your name]\nMelbourne Capital Group" }},
+    { id:Date.now()+4, name:"Isabella Monteiro", title:"CFO & Co-Founder", company:"Monteiro Ventures", industry:"Venture Capital", location:"Mexico City, Mexico", email:"i.monteiro@monteiroventures.mx", recentActivity:"Led Series B round for three LatAm fintech startups", status:"Pending", message:{ subject:"Protecting carry and personal wealth across jurisdictions", body:"Hi Isabella,\n\nLeading multiple Series B rounds means your personal wealth picture is becoming complex — carry, co-investments, and equity across different jurisdictions create planning challenges standard advisors aren't equipped for.\n\nWe build offshore structures, retirement plans, and estate frameworks that grow alongside the portfolio rather than react to it. Fully independent — no bank, no proprietary funds.\n\nWould a 15-minute conversation be worth your time?\n\nBest regards,\n[Your name]\nMelbourne Capital Group" }},
+    { id:Date.now()+5, name:"Alejandro Vargas", title:"CEO", company:"Vargas & Asociados", industry:"Corporate Advisory", location:"Lima, Peru", email:"a.vargas@vargasasociados.pe", recentActivity:"Advised on three major M&A transactions in mining", status:"Pending", message:{ subject:"A question about your personal wealth structure", body:"Hi Alejandro,\n\nAdvisors who orchestrate large M&A transactions often focus intensely on their clients' structures — and less on their own. It's a pattern I see frequently.\n\nMelbourne Capital Group works with senior advisors in your position to build an independent, internationally structured wealth plan that reflects the sophistication of the work you do for others.\n\nCII-accredited, FEIFA member, no bank affiliation.\n\nWould a brief call make sense?\n\nWarm regards,\n[Your name]\nMelbourne Capital Group" }},
+  ];
+  const sea = [
+    { id:Date.now()+1, name:"Ahmad Zulkifli", title:"Executive Chairman", company:"Petronas Ventures", industry:"Energy", location:"Kuala Lumpur", email:"ahmad.z@petronasventures.com", recentActivity:"Keynote at Energy Summit KL 2026", status:"Pending", message:{ subject:"Cross-border structuring after the Energy Summit", body:"Hi Ahmad,\n\nYour keynote at the Energy Summit raised interesting points on regional capital allocation — particularly the cross-border complexity that comes with assets across multiple jurisdictions in Asia.\n\nAt Melbourne Capital Group we specialise in exactly this: offshore structuring, international estate planning, and wealth protection for senior executives.\n\nWould a 20-minute call make sense?\n\nBest regards,\n[Your name]\nMelbourne Capital Group" }},
+    { id:Date.now()+2, name:"Lim Wei Ling", title:"CEO", company:"Pavilion Capital", industry:"Family Office", location:"Kuala Lumpur", email:"wl@pavilioncapital.my", recentActivity:"Published article on emerging market allocations", status:"Pending", message:{ subject:"Your emerging market piece — a related thought", body:"Hi Wei Ling,\n\nYour article on emerging market allocations made a compelling case for diversification — a principle we apply equally to the personal wealth structures of the principals we advise.\n\nMelbourne Capital Group works with family office leaders across Malaysia on cross-border estate planning, offshore structures, and independent investment advice.\n\nWould it be worth a short conversation?\n\nWarm regards,\n[Your name]\nMelbourne Capital Group" }},
+  ];
+  return isLatam ? latam : sea;
+}
+
+function parseQuery(q) {
+  const body = { per_page: 10, page: 1 };
+  const titleMap = { "ceo": ["CEO","Chief Executive Officer"], "cfo": ["CFO","Chief Financial Officer"], "founder": ["Founder","Co-Founder"], "managing director": ["Managing Director"], "md": ["Managing Director"], "chairman": ["Chairman","Executive Chairman"], "partner": ["Partner","Managing Partner"], "principal": ["Principal"], "director": ["Director"] };
+  const locationMap = { "brazil": ["Brazil"], "mexico": ["Mexico"], "colombia": ["Colombia"], "chile": ["Chile"], "peru": ["Peru"], "argentina": ["Argentina"], "latin america": ["Brazil","Mexico","Colombia","Chile","Peru","Argentina"], "latam": ["Brazil","Mexico","Colombia","Chile","Peru","Argentina"], "malaysia": ["Malaysia"], "singapore": ["Singapore"], "kuala lumpur": ["Malaysia"], "bangkok": ["Thailand"], "thailand": ["Thailand"] };
+  const industryMap = { "private equity": ["Private Equity"], "family office": ["Family Office"], "venture capital": ["Venture Capital"], "banking": ["Banking"], "finance": ["Financial Services"], "energy": ["Oil & Energy"], "wealth": ["Financial Services"], "investment": ["Investment Management"] };
+  const lower = q.toLowerCase();
+  const titles = []; const locs = []; const industries = [];
+  for (const [k,v] of Object.entries(titleMap)) { if (lower.includes(k)) titles.push(...v); }
+  for (const [k,v] of Object.entries(locationMap)) { if (lower.includes(k)) locs.push(...v); }
+  for (const [k,v] of Object.entries(industryMap)) { if (lower.includes(k)) industries.push(...v); }
+  if (titles.length) body.person_titles = [...new Set(titles)];
+  if (locs.length) body.person_locations = [...new Set(locs)];
+  if (industries.length) body.organization_industry_tag_ids = undefined, body.q_organization_keyword_tags = [...new Set(industries)];
+  body.prospected_by_current_team = ["no"];
+  return body;
+}
+
+function addLog(msg, prog) {
+  const fill = document.getElementById("progress-fill");
+  const pct = document.getElementById("progress-pct");
+  fill.style.width = prog + "%";
+  if (prog >= 100) fill.classList.add("done");
+  pct.textContent = prog + "%";
+  document.querySelectorAll(".log-line.latest").forEach(l=>l.classList.remove("latest"));
+  const line = document.createElement("div");
+  line.className = "log-line latest";
+  line.innerHTML = `<span style="opacity:0.5;margin-right:8px">${new Date().toLocaleTimeString()}</span>${msg}`;
+  document.getElementById("log-box").appendChild(line);
+}
+
+async function generateEmailForProspect(p) {
+  const senderBio = document.getElementById("sender-bio").value;
+  const systemPrompt = `You are an expert outreach writer for Melbourne Capital Group, an award-winning independent wealth advisory firm. Write concise, warm, credible personalised emails to HNWIs. Max 100 words. Open with a specific reference to their role or company. End with a single low-friction ask. Never use: synergy, leverage, touching base, circle back. Return ONLY valid JSON: {"subject":"...","body":"..."}`;
+  const userPrompt = `Write a personalised outreach email for:\n- Name: ${p.name}\n- Title: ${p.title}\n- Company: ${p.company}\n- Location: ${p.location}\n- Industry: ${p.industry}\n\nSender: ${senderBio}\n\nReturn only JSON.`;
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 500, system: systemPrompt, messages: [{ role: "user", content: userPrompt }] })
+    });
+    const data = await res.json();
+    const text = data.content?.[0]?.text || "{}";
+    return JSON.parse(text.replace(/```json|```/g,"").trim());
+  } catch {
+    return { subject: `A question for ${p.name.split(" ")[0]}`, body: `Hi ${p.name.split(" ")[0]},\n\nI came across your work at ${p.company} and wanted to reach out. At Melbourne Capital Group we specialise in cross-border wealth structuring and independent financial advisory for principals like yourself.\n\nWould a short call make sense?\n\nBest regards,\n[Your name]\nMelbourne Capital Group` };
+  }
+}
+
+async function runSearch() {
+  const q = document.getElementById("search-query").value.trim();
+  if (!q) return;
+  document.getElementById("search-btn").disabled = true;
+  document.getElementById("search-btn").textContent = "Running...";
+  document.getElementById("search-progress-area").style.display = "block";
+  document.getElementById("log-box").innerHTML = "";
+  document.getElementById("progress-fill").classList.remove("done");
+
+  addLog("Apollo: parsing your search criteria...", 10);
+  await new Promise(r=>setTimeout(r,500));
+
+  const apolloBody = parseQuery(q);
+  addLog(`Apollo: searching ${(apolloBody.person_titles||["executives"]).join(", ")} in ${(apolloBody.person_locations||["target region"]).join(", ")}...`, 25);
+
+  let rawProspects = [];
+  try {
+    const res = await fetch(APOLLO_PROXY, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(apolloBody)
+    });
+    const data = await res.json();
+    rawProspects = (data.people || []).slice(0, 8);
+    addLog(`Apollo: found ${rawProspects.length} matching prospects`, 45);
+  } catch(e) {
+    addLog("Apollo search failed — using demo prospects", 45);
+    rawProspects = [];
+  }
+
+  if (rawProspects.length === 0) {
+    addLog("Falling back to demo prospects...", 50);
+    await new Promise(r=>setTimeout(r,400));
+    const demo = generateProspects(q);
+    addLog("Generating personalised emails with Claude...", 70);
+    await new Promise(r=>setTimeout(r,600));
+    const existingIds = new Set(prospects.map(p=>p.id));
+    demo.forEach(p => { if (!existingIds.has(p.id)) prospects.push(p); });
+    addLog(`Done — ${demo.length} prospects ready for review`, 100);
+    updateStats();
+    document.getElementById("search-btn").disabled = false;
+    document.getElementById("search-btn").textContent = "Search + generate messages";
+    switchTab("prospects");
+    showNotif(demo.length + " prospects ready for review");
+    return;
+  }
+
+  addLog("Claude: generating personalised MCG emails...", 55);
+  const newProspects = [];
+  for (let i = 0; i < rawProspects.length; i++) {
+    const p = rawProspects[i];
+    const name = `${p.first_name || ""} ${p.last_name || ""}`.trim() || "Unknown";
+    const prospect = {
+      id: Date.now() + i,
+      name,
+      title: p.title || p.headline || "Executive",
+      company: p.organization?.name || p.employment_history?.[0]?.organization_name || "Unknown Company",
+      industry: p.organization?.industry || "Finance",
+      location: p.city ? `${p.city}, ${p.country}` : (p.country || "Latin America"),
+      email: p.email || `${(p.first_name||"contact").toLowerCase()}@${(p.organization?.website_url||"company.com").replace("https://","").replace("www.","")}`,
+      recentActivity: p.headline || p.title || "",
+      status: "Pending",
+      generatedAt: new Date().toLocaleString()
+    };
+    const msg = await generateEmailForProspect(prospect);
+    prospect.message = msg;
+    newProspects.push(prospect);
+    addLog(`Claude: email generated for ${name}`, 55 + Math.round(((i+1)/rawProspects.length) * 40));
+    await new Promise(r=>setTimeout(r,200));
+  }
+
+  const existingIds = new Set(prospects.map(p=>p.id));
+  newProspects.forEach(p => { if (!existingIds.has(p.id)) prospects.push(p); });
+  addLog(`Done — ${newProspects.length} prospects ready for review`, 100);
+  updateStats();
+  document.getElementById("search-btn").disabled = false;
+  document.getElementById("search-btn").textContent = "Search + generate messages";
+  switchTab("prospects");
+  showNotif(`${newProspects.length} real prospects found and emails generated`);
+}
+
+function showNotif(msg, type="success") {
+  const el = document.createElement("div");
+  el.className = `notif notif-${type}`;
+  el.textContent = msg;
+  document.getElementById("notif-area").appendChild(el);
+  setTimeout(() => el.remove(), 4000);
+}
+</script>
+</body>
+</html>

@@ -350,20 +350,37 @@ function generateProspects(query) {
 }
 
 function parseQuery(q) {
-  const body = { per_page: 10, page: 1 };
-  const titleMap = { "ceo": ["CEO","Chief Executive Officer"], "cfo": ["CFO","Chief Financial Officer"], "founder": ["Founder","Co-Founder"], "managing director": ["Managing Director"], "md": ["Managing Director"], "chairman": ["Chairman","Executive Chairman"], "partner": ["Partner","Managing Partner"], "principal": ["Principal"], "director": ["Director"] };
-  const locationMap = { "brazil": ["Brazil"], "mexico": ["Mexico"], "colombia": ["Colombia"], "chile": ["Chile"], "peru": ["Peru"], "argentina": ["Argentina"], "latin america": ["Brazil","Mexico","Colombia","Chile","Peru","Argentina"], "latam": ["Brazil","Mexico","Colombia","Chile","Peru","Argentina"], "malaysia": ["Malaysia"], "singapore": ["Singapore"], "kuala lumpur": ["Malaysia"], "bangkok": ["Thailand"], "thailand": ["Thailand"] };
-  const industryMap = { "private equity": ["Private Equity"], "family office": ["Family Office"], "venture capital": ["Venture Capital"], "banking": ["Banking"], "finance": ["Financial Services"], "energy": ["Oil & Energy"], "wealth": ["Financial Services"], "investment": ["Investment Management"] };
+  const titles = [];
+  const locations = [];
+  const titleKeywords = ["ceo","cfo","cto","founder","managing director","chairman","executive","partner","president","director","principal","owner","vp","vice president","head of"];
+  const locationMap = { brazil:["Brazil"], mexico:["Mexico"], colombia:["Colombia"], chile:["Chile"], peru:["Peru"], argentina:["Argentina"], "latin america":["Brazil","Mexico","Colombia","Chile","Peru","Argentina"], latam:["Brazil","Mexico","Colombia","Chile","Peru","Argentina"], singapore:["Singapore"], malaysia:["Malaysia","Kuala Lumpur"], bangkok:["Bangkok, Thailand"], thailand:["Bangkok, Thailand"] };
   const lower = q.toLowerCase();
-  const titles = []; const locs = []; const industries = [];
-  for (const [k,v] of Object.entries(titleMap)) { if (lower.includes(k)) titles.push(...v); }
-  for (const [k,v] of Object.entries(locationMap)) { if (lower.includes(k)) locs.push(...v); }
-  for (const [k,v] of Object.entries(industryMap)) { if (lower.includes(k)) industries.push(...v); }
-  if (titles.length) body.person_titles = [...new Set(titles)];
-  if (locs.length) body.person_locations = [...new Set(locs)];
-  if (industries.length) body.organization_industry_tag_ids = undefined, body.q_organization_keyword_tags = [...new Set(industries)];
-  body.prospected_by_current_team = ["no"];
-  return body;
+  titleKeywords.forEach(t => { if (lower.includes(t)) titles.push(t); });
+  Object.entries(locationMap).forEach(([k,v]) => { if (lower.includes(k)) v.forEach(l => { if (!locations.includes(l)) locations.push(l); }); });
+  if (titles.length === 0) titles.push("CEO","Managing Director","Founder","Chairman");
+  if (locations.length === 0) locations.push("Brazil","Mexico","Colombia");
+  return { titles, locations };
+}
+
+async function callClaude(prospect) {
+  const bio = document.getElementById("sender-bio").value;
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 500,
+        system: `You are an expert outreach writer for Melbourne Capital Group, an award-winning independent wealth management firm. Write concise, personalised emails to HNWIs. Rules: 60-90 words max, open with a specific reference to their role or company, one low-friction ask at the end, never use: synergy, leverage, reaching out, touch base, circle back. Return ONLY valid JSON: {"subject":"...","body":"..."}`,
+        messages: [{ role: "user", content: `Write a personalised outreach email.\nProspect: ${prospect.name}, ${prospect.title} at ${prospect.company}, ${prospect.location}\nSender bio: ${bio}\nReturn only JSON.` }]
+      })
+    });
+    const data = await res.json();
+    const text = data.content?.[0]?.text || "{}";
+    return JSON.parse(text.replace(/```json|```/g,"").trim());
+  } catch {
+    return { subject: `A thought for you, ${prospect.name.split(" ")[0]}`, body: `Hi ${prospect.name.split(" ")[0]},\n\nGiven your role at ${prospect.company}, I wanted to reach out from Melbourne Capital Group. We specialise in cross-border estate planning, offshore structuring, and independent wealth management for business principals across Latin America.\n\nWould a brief call make sense?\n\nBest regards,\n[Your name]\nMelbourne Capital Group` };
+  }
 }
 
 function addLog(msg, prog) {
@@ -379,24 +396,6 @@ function addLog(msg, prog) {
   document.getElementById("log-box").appendChild(line);
 }
 
-async function generateEmailForProspect(p) {
-  const senderBio = document.getElementById("sender-bio").value;
-  const systemPrompt = `You are an expert outreach writer for Melbourne Capital Group, an award-winning independent wealth advisory firm. Write concise, warm, credible personalised emails to HNWIs. Max 100 words. Open with a specific reference to their role or company. End with a single low-friction ask. Never use: synergy, leverage, touching base, circle back. Return ONLY valid JSON: {"subject":"...","body":"..."}`;
-  const userPrompt = `Write a personalised outreach email for:\n- Name: ${p.name}\n- Title: ${p.title}\n- Company: ${p.company}\n- Location: ${p.location}\n- Industry: ${p.industry}\n\nSender: ${senderBio}\n\nReturn only JSON.`;
-  try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 500, system: systemPrompt, messages: [{ role: "user", content: userPrompt }] })
-    });
-    const data = await res.json();
-    const text = data.content?.[0]?.text || "{}";
-    return JSON.parse(text.replace(/```json|```/g,"").trim());
-  } catch {
-    return { subject: `A question for ${p.name.split(" ")[0]}`, body: `Hi ${p.name.split(" ")[0]},\n\nI came across your work at ${p.company} and wanted to reach out. At Melbourne Capital Group we specialise in cross-border wealth structuring and independent financial advisory for principals like yourself.\n\nWould a short call make sense?\n\nBest regards,\n[Your name]\nMelbourne Capital Group` };
-  }
-}
-
 async function runSearch() {
   const q = document.getElementById("search-query").value.trim();
   if (!q) return;
@@ -407,75 +406,63 @@ async function runSearch() {
   document.getElementById("progress-fill").classList.remove("done");
 
   addLog("Apollo: parsing your search criteria...", 10);
+  const { titles, locations } = parseQuery(q);
   await new Promise(r=>setTimeout(r,500));
 
-  const apolloBody = parseQuery(q);
-  addLog(`Apollo: searching ${(apolloBody.person_titles||["executives"]).join(", ")} in ${(apolloBody.person_locations||["target region"]).join(", ")}...`, 25);
+  addLog(`Apollo: searching ${titles.slice(0,2).join(", ")} in ${locations.slice(0,2).join(", ")}...`, 25);
 
-  let rawProspects = [];
+  let apolloResults = [];
   try {
     const res = await fetch(APOLLO_PROXY, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(apolloBody)
+      body: JSON.stringify({
+        person_titles: titles,
+        person_locations: locations,
+        per_page: 10,
+        page: 1
+      })
     });
     const data = await res.json();
-    rawProspects = (data.people || []).slice(0, 8);
-    addLog(`Apollo: found ${rawProspects.length} matching prospects`, 45);
+    apolloResults = data.people || [];
+    addLog(`Apollo: found ${apolloResults.length} matching profiles`, 45);
   } catch(e) {
-    addLog("Apollo search failed — using demo prospects", 45);
-    rawProspects = [];
+    addLog("Apollo: connection issue — using demo data", 45);
+    apolloResults = generateProspects(q).map(p => ({ id: p.id, first_name: p.name.split(" ")[0], last_name: p.name.split(" ")[1] || "", title: p.title, organization: { name: p.company }, city: p.location, email: p.email }));
   }
 
-  if (rawProspects.length === 0) {
-    addLog("Falling back to demo prospects...", 50);
-    await new Promise(r=>setTimeout(r,400));
-    const demo = generateProspects(q);
-    addLog("Generating personalised emails with Claude...", 70);
-    await new Promise(r=>setTimeout(r,600));
-    const existingIds = new Set(prospects.map(p=>p.id));
-    demo.forEach(p => { if (!existingIds.has(p.id)) prospects.push(p); });
-    addLog(`Done — ${demo.length} prospects ready for review`, 100);
-    updateStats();
-    document.getElementById("search-btn").disabled = false;
-    document.getElementById("search-btn").textContent = "Search + generate messages";
-    switchTab("prospects");
-    showNotif(demo.length + " prospects ready for review");
-    return;
-  }
+  await new Promise(r=>setTimeout(r,400));
+  addLog("Claude: generating personalised emails...", 60);
 
-  addLog("Claude: generating personalised MCG emails...", 55);
   const newProspects = [];
-  for (let i = 0; i < rawProspects.length; i++) {
-    const p = rawProspects[i];
+  for (let i = 0; i < Math.min(apolloResults.length, 8); i++) {
+    const p = apolloResults[i];
     const name = `${p.first_name || ""} ${p.last_name || ""}`.trim() || "Unknown";
     const prospect = {
       id: Date.now() + i,
       name,
-      title: p.title || p.headline || "Executive",
+      title: p.title || "Executive",
       company: p.organization?.name || p.employment_history?.[0]?.organization_name || "Unknown Company",
-      industry: p.organization?.industry || "Finance",
-      location: p.city ? `${p.city}, ${p.country}` : (p.country || "Latin America"),
-      email: p.email || `${(p.first_name||"contact").toLowerCase()}@${(p.organization?.website_url||"company.com").replace("https://","").replace("www.","")}`,
-      recentActivity: p.headline || p.title || "",
+      location: [p.city, p.country].filter(Boolean).join(", ") || "Latin America",
+      email: p.email || p.personal_emails?.[0] || `${(p.first_name||"contact").toLowerCase()}@${(p.organization?.name||"company").toLowerCase().replace(/\s+/g,"")}.com`,
+      recentActivity: p.headline || `${p.title} at ${p.organization?.name || "their company"}`,
       status: "Pending",
-      generatedAt: new Date().toLocaleString()
     };
-    const msg = await generateEmailForProspect(prospect);
+    const msg = await callClaude(prospect);
     prospect.message = msg;
     newProspects.push(prospect);
-    addLog(`Claude: email generated for ${name}`, 55 + Math.round(((i+1)/rawProspects.length) * 40));
+    addLog(`Generated email for ${name}`, 60 + Math.round((i+1)/Math.min(apolloResults.length,8)*35));
     await new Promise(r=>setTimeout(r,200));
   }
 
+  addLog(`Done — ${newProspects.length} prospects ready for review`, 100);
   const existingIds = new Set(prospects.map(p=>p.id));
   newProspects.forEach(p => { if (!existingIds.has(p.id)) prospects.push(p); });
-  addLog(`Done — ${newProspects.length} prospects ready for review`, 100);
   updateStats();
   document.getElementById("search-btn").disabled = false;
   document.getElementById("search-btn").textContent = "Search + generate messages";
   switchTab("prospects");
-  showNotif(`${newProspects.length} real prospects found and emails generated`);
+  showNotif(newProspects.length + " prospects ready for review");
 }
 
 function showNotif(msg, type="success") {

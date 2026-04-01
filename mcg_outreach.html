@@ -102,7 +102,22 @@
   </div>
 
   <div id="panel-prospects" style="display:none">
-    <div id="no-gmail-warning" class="warning-bar" style="display:none">
+    <div id="manual-form" style="display:none;border:0.5px solid #e0dfd8;border-radius:10px;padding:16px;margin-bottom:16px;background:#fff">
+    <div style="font-size:13px;font-weight:500;margin-bottom:12px">Add prospect manually</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+      <div><div style="font-size:11px;color:#888;margin-bottom:4px">Full name</div><input id="m-name" class="input" placeholder="e.g. Carlos Mendoza"/></div>
+      <div><div style="font-size:11px;color:#888;margin-bottom:4px">Email address</div><input id="m-email" class="input" placeholder="e.g. carlos@company.com"/></div>
+      <div><div style="font-size:11px;color:#888;margin-bottom:4px">Job title</div><input id="m-title" class="input" placeholder="e.g. CEO"/></div>
+      <div><div style="font-size:11px;color:#888;margin-bottom:4px">Company</div><input id="m-company" class="input" placeholder="e.g. Grupo Mendoza"/></div>
+      <div><div style="font-size:11px;color:#888;margin-bottom:4px">Location</div><input id="m-location" class="input" placeholder="e.g. São Paulo, Brazil"/></div>
+      <div><div style="font-size:11px;color:#888;margin-bottom:4px">Recent activity (optional)</div><input id="m-activity" class="input" placeholder="e.g. Spoke at PE Summit 2026"/></div>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-primary" id="m-submit-btn" onclick="addManualProspect()">Generate email + add</button>
+      <button class="btn" onclick="document.getElementById('manual-form').style.display='none'">Cancel</button>
+    </div>
+  </div>
+  <div id="no-gmail-warning" class="warning-bar" style="display:none">
       <span>Connect Gmail to send emails directly from this dashboard</span>
       <button class="btn btn-primary" style="flex-shrink:0;font-size:12px;padding:5px 12px" onclick="connectGmail()">Connect now</button>
     </div>
@@ -352,13 +367,13 @@ function generateProspects(query) {
 function parseQuery(q) {
   const titles = [];
   const locations = [];
-  const titleKeywords = ["ceo","cfo","cto","founder","managing director","chairman","executive","partner","president","director","principal","owner","vp","vice president","head of"];
-  const locationMap = { brazil:["Brazil"], mexico:["Mexico"], colombia:["Colombia"], chile:["Chile"], peru:["Peru"], argentina:["Argentina"], "latin america":["Brazil","Mexico","Colombia","Chile","Peru","Argentina"], latam:["Brazil","Mexico","Colombia","Chile","Peru","Argentina"], singapore:["Singapore"], malaysia:["Malaysia","Kuala Lumpur"], bangkok:["Bangkok, Thailand"], thailand:["Bangkok, Thailand"] };
+  const titleKeywords = ["ceo","cfo","cto","founder","managing director","chairman","executive","partner","president","director","principal","owner","vp","vice president","head of","wealth manager","financial advisor","private equity","hedge fund","family office"];
+  const locationMap = { brazil:["Brazil"], mexico:["Mexico"], colombia:["Colombia"], chile:["Chile"], peru:["Peru"], argentina:["Argentina"], "latin america":["Brazil","Mexico","Colombia","Chile","Peru","Argentina"], latam:["Brazil","Mexico","Colombia","Chile","Peru","Argentina"], singapore:["Singapore"], malaysia:["Malaysia"], bangkok:["Thailand"], thailand:["Thailand"], london:["London, United Kingdom"], uk:["United Kingdom"], usa:["United States"], "united states":["United States"], new york:["New York, United States"], dubai:["Dubai, United Arab Emirates"], uae:["United Arab Emirates"] };
   const lower = q.toLowerCase();
   titleKeywords.forEach(t => { if (lower.includes(t)) titles.push(t); });
   Object.entries(locationMap).forEach(([k,v]) => { if (lower.includes(k)) v.forEach(l => { if (!locations.includes(l)) locations.push(l); }); });
-  if (titles.length === 0) titles.push("CEO","Managing Director","Founder","Chairman");
-  if (locations.length === 0) locations.push("Brazil","Mexico","Colombia");
+  if (titles.length === 0) titles.push("CEO","Founder","Managing Director");
+  if (locations.length === 0) locations.push("United States");
   return { titles, locations };
 }
 

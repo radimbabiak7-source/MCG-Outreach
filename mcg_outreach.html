@@ -472,10 +472,12 @@ async function runSearch() {
   document.getElementById("lb").innerHTML="";
   document.getElementById("pf").classList.remove("done");
   log("Searching ["+titles.slice(0,2).join(", ")+"] in ["+locs.slice(0,2).join(", ")+"]...",10);
-  var res=[], page=1;
+  var res=[], page=1, maxPages=10;
   var existingKeys = new Set(prox.map(dedupKey));
+  // also index by first+last name for pre-enrichment matching
+  var existingNames = new Set(prox.map(function(p){ return p.name.toLowerCase().trim(); }));
   try {
-    while(res.length < n) {
+    while(res.length < n && page <= maxPages) {
       var payload={person_titles:titles,person_locations:locs,per_page:25,page:page};
       if(org.length)payload.organization_locations=org;
       if(lang.length)payload.languages=lang;
@@ -483,22 +485,23 @@ async function runSearch() {
       var d = await px("search",payload);
       if(d.error){log("Apollo error: "+JSON.stringify(d.error),30);break;}
       var batch = d.people||[];
-      if(!batch.length) break;
+      if(!batch.length){log("No more results from Apollo at page "+page,30);break;}
       var fresh = batch.filter(function(r){
         var nameKey = ((r.first_name||"")+" "+(r.last_name||"")).toLowerCase().trim();
         var emailKey = r.email&&r.email!=="Not available"?r.email.toLowerCase().trim():null;
-        return !existingKeys.has(nameKey) && (!emailKey||!existingKeys.has(emailKey));
+        var alreadyByName = existingNames.has(nameKey);
+        var alreadyByEmail = emailKey && existingKeys.has(emailKey);
+        return !alreadyByName && !alreadyByEmail;
       });
-      log("Apollo page "+page+": "+fresh.length+" new of "+batch.length+" returned"+(d.pagination?" ("+d.pagination.total_entries+" total)":""),30);
+      log("Apollo page "+page+": "+fresh.length+" new of "+batch.length+" ("+res.length+"/"+n+" collected so far)",30);
       res = res.concat(fresh);
-      if(batch.length < 25) break; // no more pages
-      if(res.length >= n) break;
+      if(batch.length < 25){log("Reached end of Apollo results",30);break;}
       page++;
       await new Promise(function(r){setTimeout(r,400);});
     }
   } catch(e){log("Connection error: "+e.message,30);}
   res = res.slice(0, n);
-  if(!res.length){log("No new results — all prospects already in your list or try broader criteria",100);btn.disabled=false;btn.textContent="Search + generate messages";return;}
+  if(!res.length){log("No new results — try broader criteria or different locations",100);btn.disabled=false;btn.textContent="Search + generate messages";return;}
   var crit={org:org,lang:lang,edu:edu};
   var hasExp=org.length>0||lang.length>0||edu.length>0;
   var newp=[], filtered=0;

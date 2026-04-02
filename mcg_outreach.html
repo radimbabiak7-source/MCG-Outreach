@@ -302,10 +302,48 @@ async function px(target, body) {
   return r.json();
 }
 
+// ── FIXED: exhaustive email extraction from any Apollo response shape ──
+function extractEmail(obj) {
+  if (!obj) return null;
+  // Priority order: verified work email > personal emails array > email field > account email
+  var candidates = [
+    obj.email,
+    obj.work_email,
+    obj.corporate_email,
+    (obj.personal_emails && obj.personal_emails.length) ? obj.personal_emails[0] : null,
+    (obj.account && obj.account.email) ? obj.account.email : null,
+    (obj.contact && obj.contact.email) ? obj.contact.email : null,
+  ];
+  for (var i = 0; i < candidates.length; i++) {
+    var e = candidates[i];
+    if (e && typeof e === "string" && e.indexOf("@") > 0 && !isPlaceholder(e)) return e;
+  }
+  return null;
+}
+
+function isPlaceholder(email) {
+  // Reject obviously guessed/pattern emails Apollo sometimes returns
+  var lower = email.toLowerCase();
+  return (
+    lower.indexOf("@example.") > -1 ||
+    lower.indexOf("@domain.") > -1 ||
+    lower.indexOf("placeholder") > -1 ||
+    lower.indexOf("noemail") > -1
+  );
+}
+
 async function enrich(p) {
   try {
-    var d = await px("enrich",{id:p.id,first_name:p.first_name,organization_name:p.organization?p.organization.name:"",domain:p.organization?p.organization.primary_domain:"",reveal_personal_emails:true,reveal_phone_number:false});
-    return d.person||null;
+    var d = await px("enrich", {
+      id: p.id,
+      first_name: p.first_name,
+      last_name: p.last_name,
+      organization_name: p.organization ? p.organization.name : "",
+      domain: p.organization ? p.organization.primary_domain : "",
+      reveal_personal_emails: true,
+      reveal_phone_number: false
+    });
+    return d.person || null;
   } catch(e) { return null; }
 }
 
@@ -334,12 +372,14 @@ async function scoreExpat(p) {
 
 async function filterOk(p, crit) {
   if (!crit.org.length&&!crit.lang.length&&!crit.edu.length) return true;
-  var res = await claude("Strict filter. Does prospect match criteria? Match AT LEAST ONE per non-empty list. Missing data = benefit of doubt. Reply YES or NO only.",
-    "Prospect: "+p.name+", "+p.title+" at "+p.company+", "+p.location
-    +(crit.edu.length?"\nEducation (match one): "+crit.edu.join(", "):"")
-    +(crit.lang.length?"\nLanguages (match one): "+crit.lang.join(", "):"")
-    +(crit.org.length?"\nCompany HQ (match one): "+crit.org.join(", "):"")
-    +"\nYES or NO?"
+  var res = await claude(
+    "You are a strict prospect filter. For each non-empty criteria list, evaluate whether the prospect matches AT LEAST ONE item.\n\nRules:\n- If criteria data IS present in the prospect's profile and does NOT match any item in the list → FAIL that criteria.\n- Only give benefit of the doubt if the specific data point is genuinely ABSENT from their profile (e.g. no education info at all).\n- A person who studied in Italy does NOT pass an education filter for Germany/USA/Netherlands, even if they speak English.\n- All non-empty criteria lists must pass independently.\n- Reply YES (passes all criteria) or NO (fails at least one). One word only.",
+    "Prospect: "+p.name+", "+p.title+" at "+p.company+", "+p.location+"\n"
+    +(crit.edu.length?"Education country filter (must match one — if education info present and doesn't match, FAIL): "+crit.edu.join(", ")+"\n":"")
+    +(crit.lang.length?"Languages filter (must match one — if language info present and doesn't match, FAIL): "+crit.lang.join(", ")+"\n":"")
+    +(crit.org.length?"Company HQ country filter (must match one — if HQ info present and doesn't match, FAIL): "+crit.org.join(", ")+"\n":"")
+    +"Known education info from Apollo: "+(p._r&&p._r.education?JSON.stringify(p._r.education):"not available")+"\n"
+    +"YES or NO?"
   );
   return res?res.trim().toUpperCase()!=="NO":true;
 }
@@ -391,25 +431,33 @@ async function runSearch() {
     var fn=r.first_name||"";
     log("Enriching "+fn+"...",30+Math.round((i+1)/res.length*30));
     var en=await enrich(r);
-    var fullname=en?((en.first_name||fn)+" "+(en.last_name||"")).trim():(fn+" "+(r.last_name||"")).trim()||"Unknown";
-    var email=en?(en.email||(en.personal_emails&&en.personal_emails[0])||null):null;
+
+    var fullname = en
+      ? ((en.first_name||fn)+" "+(en.last_name||r.last_name||"")).trim()
+      : (fn+" "+(r.last_name||"")).trim() || "Unknown";
+
+    // ── FIXED: try search result first, then enriched person, across all known fields ──
+    var email = extractEmail(r) || extractEmail(en);
+
     var p={
       id:Date.now()+i,
       name:fullname,
       title:r.title||(en?en.title:"")||"Executive",
       company:(r.organization?r.organization.name:"")|| (en&&en.organization?en.organization.name:"")||"Unknown",
       location:[r.city||(en?en.city:""),r.country||(en?en.country:"")].filter(Boolean).join(", "),
-      email:email||"Not available",
+      email: email || "Not available",
       signal:r.headline||(en?en.headline:"")||"",
       status:"Pending",
       _r:r
     };
+
+    var emailStatus = email ? "✓ "+email : "⚠ no email found";
     if(hasExp){
       var ok=await filterOk(p,crit);
       if(!ok){filtered++;log("Filtered: "+fullname,60+Math.round((i+1)/res.length*10));continue;}
     }
     p.expat=hasExp?await scoreExpat(r):null;
-    log((p.expat?"["+p.expat+"] ":"")+"Generating email for "+fullname+(email?" ✓":" (no email)"),65+Math.round((i+1)/res.length*30));
+    log((p.expat?"["+p.expat+"] ":"")+"Generating email for "+fullname+" — "+emailStatus,65+Math.round((i+1)/res.length*30));
     p.msg=await genEmail(p);
     newp.push(p);
     await new Promise(function(r){setTimeout(r,200);});

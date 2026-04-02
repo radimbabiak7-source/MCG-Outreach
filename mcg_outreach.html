@@ -93,8 +93,16 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
         <input id="search-titles" class="input" placeholder="CEO, Founder, Managing Director" value="CEO, Founder, Managing Director"/>
       </div>
       <div>
-        <div class="field-label">Locations <span style="color:#aaa">(comma separated)</span></div>
-        <input id="search-locations" class="input" placeholder="Brazil, Mexico, Colombia"/>
+        <div class="field-label">Where prospect is located <span style="color:#aaa">(comma separated)</span></div>
+        <input id="search-locations" class="input" placeholder="Malaysia, Singapore, Thailand"/>
+      </div>
+      <div>
+        <div class="field-label">Company HQ country <span style="color:#aaa">(expat filter — optional)</span></div>
+        <input id="search-org-locations" class="input" placeholder="e.g. United Kingdom, Netherlands, Australia"/>
+      </div>
+      <div>
+        <div class="field-label">Languages spoken <span style="color:#aaa">(expat filter — optional)</span></div>
+        <input id="search-languages" class="input" placeholder="e.g. English, Dutch, French"/>
       </div>
       <div>
         <div class="field-label">Industry <span style="color:#aaa">(optional)</span></div>
@@ -108,6 +116,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
           <option value="20">20 prospects</option>
         </select>
       </div>
+    </div>
+    <div style="background:#f0efe8;border-radius:8px;padding:10px 14px;font-size:12px;color:#666;margin-bottom:14px;line-height:1.6">
+      <strong style="color:#444">Expat targeting:</strong> Use "Company HQ country" to find people working in Malaysia/Singapore but employed by European/Australian firms. Use "Languages spoken" to filter for English/Dutch/French speakers. Claude will also score each result for likely expat status.
     </div>
     <button class="btn btn-primary" id="search-btn" onclick="runSearch()">Search + generate messages</button>
     <div id="search-progress-area" style="display:none;margin-top:20px">
@@ -286,6 +297,7 @@ function renderProspects() {
           </div>
         </div>
         ${p.recentActivity ? `<div class="signal-row"><span style="font-size:11px;color:#aaa;margin-right:6px">Signal:</span>${p.recentActivity}</div>` : ""}
+        ${p.expatScore ? `<div class="signal-row"><span style="font-size:11px;color:#aaa;margin-right:6px">Expat likelihood:</span><span style="font-weight:500;color:${p.expatScore==='High'?'#1d9e75':p.expatScore==='Medium'?'#ba7517':'#a32d2d'}">${p.expatScore}</span></div>` : ""}
         <div class="card-body">
           <div class="section-label">Email — edit then send</div>
           <div class="field-label" style="margin-top:8px">Subject line</div>
@@ -371,20 +383,43 @@ async function sendEmail(id) {
 async function callClaude(prospect) {
   const bio = document.getElementById("sender-bio").value;
   try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
+    const res = await fetch(APOLLO_PROXY, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Target": "claude" },
       body: JSON.stringify({
         model: "claude-sonnet-4-20250514",
         max_tokens: 500,
-        system: `You are an expert outreach writer for Melbourne Capital Group, an award-winning independent wealth management firm. Write concise, personalised emails to HNWIs. Rules: 60-90 words max, open with a specific reference to their role or company, one low-friction ask at the end, never use: synergy, leverage, reaching out, touch base, circle back. Return ONLY valid JSON: {"subject":"...","body":"..."}`,
-        messages: [{ role: "user", content: `Write a personalised outreach email.\nProspect: ${prospect.name}, ${prospect.title} at ${prospect.company}, ${prospect.location}\nSender bio: ${bio}\nReturn only JSON.` }]
+        system: `You are an expert outreach writer for Melbourne Capital Group, an award-winning independent wealth management firm based in Kuala Lumpur. Write genuinely personalised, human-sounding emails to HNWIs and senior executives.
+
+Rules:
+- 70-100 words for the body
+- Open with something specific and genuine about THIS person — their exact role, company, industry context, or location. Never use generic openers.
+- One clear sentence on why Melbourne Capital Group is relevant to them specifically
+- End with a single low-friction ask — a short call, a question, a reaction
+- Tone: warm, peer-to-peer, confident but not pushy. Like a respected advisor writing to an equal.
+- Never use: synergy, leverage, exciting opportunity, reaching out, touch base, circle back, I hope this finds you well
+- Make the subject line intriguing and specific — not generic like "Quick question" or "Introduction"
+- Return ONLY valid JSON: {"subject":"...","body":"..."}`,
+        messages: [{ role: "user", content: `Write a personalised outreach email for this specific prospect.
+
+PROSPECT DETAILS:
+- Name: ${prospect.name}
+- Title: ${prospect.title}
+- Company: ${prospect.company}
+- Location: ${prospect.location}
+- Industry context: ${prospect.recentActivity || prospect.title + " at " + prospect.company}
+${prospect.expatScore ? `- Expat likelihood: ${prospect.expatScore} (adjust tone accordingly — if High, reference international/cross-border relevance)` : ""}
+
+ABOUT THE SENDER:
+${bio}
+
+Write the email now. Make it feel like it was written specifically for ${prospect.name.split(" ")[0]}, not copy-pasted. Return only JSON.` }]
       })
     });
     const data = await res.json();
     const text = data.content?.[0]?.text || "{}";
     return JSON.parse(text.replace(/```json|```/g,"").trim());
-  } catch {
+  } catch(e) {
     return {
       subject: `A thought for you, ${prospect.name.split(" ")[0]}`,
       body: `Hi ${prospect.name.split(" ")[0]},\n\nGiven your role at ${prospect.company}, I wanted to connect from Melbourne Capital Group. We specialise in cross-border estate planning, offshore structuring, and independent wealth management for business principals.\n\nWould a brief call make sense?\n\nBest regards,\n[Your name]\nMelbourne Capital Group`
@@ -430,10 +465,15 @@ function addLog(msg, prog) {
 async function runSearch() {
   const titlesRaw = document.getElementById("search-titles").value.trim();
   const locationsRaw = document.getElementById("search-locations").value.trim();
+  const orgLocationsRaw = document.getElementById("search-org-locations").value.trim();
+  const languagesRaw = document.getElementById("search-languages").value.trim();
   const count = parseInt(document.getElementById("search-count").value);
   if (!titlesRaw || !locationsRaw) { showNotif("Please fill in titles and locations", "error"); return; }
+
   const titles = titlesRaw.split(",").map(t => t.trim()).filter(Boolean);
   const locations = locationsRaw.split(",").map(l => l.trim()).filter(Boolean);
+  const orgLocations = orgLocationsRaw ? orgLocationsRaw.split(",").map(l => l.trim()).filter(Boolean) : [];
+  const languages = languagesRaw ? languagesRaw.split(",").map(l => l.trim()).filter(Boolean) : [];
 
   document.getElementById("search-btn").disabled = true;
   document.getElementById("search-btn").textContent = "Running...";
@@ -441,12 +481,20 @@ async function runSearch() {
   document.getElementById("log-box").innerHTML = "";
   document.getElementById("progress-fill").classList.remove("done");
 
-  addLog(`Searching for [${titles.slice(0,2).join(", ")}] in [${locations.slice(0,2).join(", ")}]...`, 15);
+  addLog(`Searching [${titles.slice(0,2).join(", ")}] in [${locations.slice(0,2).join(", ")}]${orgLocations.length ? ` · Company HQ: [${orgLocations.slice(0,2).join(", ")}]` : ""}${languages.length ? ` · Languages: [${languages.join(", ")}]` : ""}`, 15);
   await new Promise(r=>setTimeout(r,500));
 
   let apolloResults = [];
   try {
-    const payload = { person_titles: titles, person_locations: locations, per_page: count, page: 1 };
+    const payload = {
+      person_titles: titles,
+      person_locations: locations,
+      per_page: count,
+      page: 1
+    };
+    if (orgLocations.length > 0) payload.organization_locations = orgLocations;
+    if (languages.length > 0) payload.languages = languages;
+
     const res = await fetch(APOLLO_PROXY, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -458,7 +506,7 @@ async function runSearch() {
     if (data.error) {
       addLog(`Apollo error: ${JSON.stringify(data.error)}`, 45);
     } else {
-      addLog(`Apollo: found ${apolloResults.length} profiles (${total} total matches in database)`, 45);
+      addLog(`Apollo: found ${apolloResults.length} profiles (${total} total matches)`, 45);
     }
   } catch(e) {
     addLog(`Connection error: ${e.message}`, 45);
@@ -467,13 +515,19 @@ async function runSearch() {
   await new Promise(r=>setTimeout(r,300));
 
   if (apolloResults.length === 0) {
-    addLog("No results — try different titles or locations, or use '+ Add manually'", 100);
+    addLog("No results — try broader titles/locations or remove optional filters", 100);
     document.getElementById("search-btn").disabled = false;
     document.getElementById("search-btn").textContent = "Search + generate messages";
     return;
   }
 
-  addLog(`Generating personalised emails with Claude...`, 60);
+  const hasExpatFilters = orgLocations.length > 0 || languages.length > 0;
+  if (hasExpatFilters) {
+    addLog("Claude: scoring results for likely expat status...", 55);
+    await new Promise(r=>setTimeout(r,400));
+  }
+
+  addLog("Claude: generating personalised emails...", 60);
 
   const newProspects = [];
   for (let i = 0; i < apolloResults.length; i++) {
@@ -488,11 +542,12 @@ async function runSearch() {
       email: p.email || `${(p.first_name||"contact").toLowerCase()}@${(p.organization?.primary_domain||"company.com")}`,
       recentActivity: p.headline || "",
       status: "Pending",
+      expatScore: hasExpatFilters ? await scoreExpat(p) : null,
     };
     const msg = await callClaude(prospect);
     prospect.message = msg;
     newProspects.push(prospect);
-    addLog(`Generated email for ${name}`, 60 + Math.round((i+1)/apolloResults.length * 35));
+    addLog(`${hasExpatFilters && prospect.expatScore ? `[${prospect.expatScore}] ` : ""}Generated email for ${name}`, 60 + Math.round((i+1)/apolloResults.length * 35));
     await new Promise(r=>setTimeout(r,300));
   }
 
@@ -504,6 +559,23 @@ async function runSearch() {
   document.getElementById("search-btn").textContent = "Search + generate messages";
   switchTab("prospects");
   showNotif(`${newProspects.length} prospects ready for review`);
+}
+
+async function scoreExpat(p) {
+  try {
+    const res = await fetch(APOLLO_PROXY, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Target": "claude" },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 10,
+        system: "You are an expert at identifying Western expats in Southeast Asia. Based on the person's name, company, and location, rate the likelihood they are a Western expat (not a local national). Reply with ONLY one word: High, Medium, or Low.",
+        messages: [{ role: "user", content: `Name: ${p.first_name} ${p.last_name || ""}\nTitle: ${p.title || ""}\nCompany: ${p.organization?.name || ""}\nLocation: ${p.city || ""}, ${p.country || ""}` }]
+      })
+    });
+    const data = await res.json();
+    return data.content?.[0]?.text?.trim() || null;
+  } catch { return null; }
 }
 
 function showNotif(msg, type="success") {

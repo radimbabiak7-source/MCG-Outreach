@@ -111,14 +111,26 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
       <div>
         <div class="field-label">Number of prospects</div>
         <select id="search-count" class="input">
-          <option value="5">5 prospects</option>
-          <option value="10" selected>10 prospects</option>
-          <option value="20">20 prospects</option>
+          <option value="1">1</option>
+          <option value="2">2</option>
+          <option value="3">3</option>
+          <option value="4">4</option>
+          <option value="5" selected>5</option>
+          <option value="6">6</option>
+          <option value="7">7</option>
+          <option value="8">8</option>
+          <option value="9">9</option>
+          <option value="10">10</option>
+          <option value="20">20</option>
         </select>
+      </div>
+      <div>
+        <div class="field-label">Education country <span style="color:#aaa">(expat filter — optional)</span></div>
+        <input id="search-education" class="input" placeholder="e.g. United Kingdom, United States, Netherlands"/>
       </div>
     </div>
     <div style="background:#f0efe8;border-radius:8px;padding:10px 14px;font-size:12px;color:#666;margin-bottom:14px;line-height:1.6">
-      <strong style="color:#444">Expat targeting:</strong> Use "Company HQ country" to find people working in Malaysia/Singapore but employed by European/Australian firms. Use "Languages spoken" to filter for English/Dutch/French speakers. Claude will also score each result for likely expat status.
+      <strong style="color:#444">Expat targeting:</strong> Use "Company HQ country" to find people working in Malaysia/Singapore but employed by European/Australian firms. Use "Languages spoken" to filter for English/Dutch/French speakers. Use "Education country" to find people who studied at UK/US/European universities — a strong expat signal. Claude will also score each result for expat likelihood.
     </div>
     <button class="btn btn-primary" id="search-btn" onclick="runSearch()">Search + generate messages</button>
     <div id="search-progress-area" style="display:none;margin-top:20px">
@@ -474,6 +486,7 @@ async function runSearch() {
   const locationsRaw = document.getElementById("search-locations").value.trim();
   const orgLocationsRaw = document.getElementById("search-org-locations").value.trim();
   const languagesRaw = document.getElementById("search-languages").value.trim();
+  const educationRaw = document.getElementById("search-education").value.trim();
   const count = parseInt(document.getElementById("search-count").value);
   if (!titlesRaw || !locationsRaw) { showNotif("Please fill in titles and locations", "error"); return; }
 
@@ -481,6 +494,7 @@ async function runSearch() {
   const locations = locationsRaw.split(",").map(l => l.trim()).filter(Boolean);
   const orgLocations = orgLocationsRaw ? orgLocationsRaw.split(",").map(l => l.trim()).filter(Boolean) : [];
   const languages = languagesRaw ? languagesRaw.split(",").map(l => l.trim()).filter(Boolean) : [];
+  const education = educationRaw ? educationRaw.split(",").map(l => l.trim()).filter(Boolean) : [];
 
   document.getElementById("search-btn").disabled = true;
   document.getElementById("search-btn").textContent = "Running...";
@@ -488,7 +502,7 @@ async function runSearch() {
   document.getElementById("log-box").innerHTML = "";
   document.getElementById("progress-fill").classList.remove("done");
 
-  addLog(`Searching [${titles.slice(0,2).join(", ")}] in [${locations.slice(0,2).join(", ")}]${orgLocations.length ? ` · Company HQ: [${orgLocations.slice(0,2).join(", ")}]` : ""}${languages.length ? ` · Languages: [${languages.join(", ")}]` : ""}`, 15);
+  addLog(`Searching [${titles.slice(0,2).join(", ")}] in [${locations.slice(0,2).join(", ")}]${orgLocations.length ? ` · HQ: [${orgLocations.slice(0,1).join(", ")}]` : ""}${languages.length ? ` · Lang: [${languages.join(", ")}]` : ""}${education.length ? ` · Edu: [${education.slice(0,1).join(", ")}]` : ""}`, 15);
   await new Promise(r=>setTimeout(r,500));
 
   let apolloResults = [];
@@ -501,6 +515,7 @@ async function runSearch() {
     };
     if (orgLocations.length > 0) payload.organization_locations = orgLocations;
     if (languages.length > 0) payload.languages = languages;
+    if (education.length > 0) payload.person_education_locations = education;
 
     const res = await fetch(APOLLO_PROXY, {
       method: "POST",

@@ -543,35 +543,57 @@ async function runSearch() {
     return;
   }
 
-  const hasExpatFilters = orgLocations.length > 0 || languages.length > 0;
+  const hasExpatFilters = orgLocations.length > 0 || languages.length > 0 || education.length > 0;
   if (hasExpatFilters) {
-    addLog("Claude: scoring results for likely expat status...", 55);
-    await new Promise(r=>setTimeout(r,400));
+    addLog("Claude: filtering results against your expat criteria...", 55);
+    await new Promise(r=>setTimeout(r,300));
   }
 
   addLog("Claude: generating personalised emails...", 60);
 
   const newProspects = [];
+  let filtered = 0;
   for (let i = 0; i < apolloResults.length; i++) {
     const p = apolloResults[i];
     const name = `${p.first_name||""} ${p.last_name||""}`.trim() || "Unknown";
+    // Auto-enrich to get full name and real email
+    addLog(`Enriching ${name}...`, 60 + Math.round((i+1)/apolloResults.length * 10));
+    const enriched = await enrichProspect(p.id);
+    const fullName = enriched ? `${enriched.first_name||""} ${enriched.last_name||""}`.trim() : name;
+    const realEmail = enriched?.email || enriched?.personal_emails?.[0] || null;
+
     const prospect = {
       id: Date.now() + i,
-      name,
-      title: p.title || "Executive",
-      company: p.organization?.name || "Unknown Company",
-      location: [p.city, p.country].filter(Boolean).join(", ") || "",
-      email: p.email || `${(p.first_name||"contact").toLowerCase()}@${(p.organization?.primary_domain||"company.com")}`,
-      recentActivity: p.headline || "",
+      name: fullName,
+      title: p.title || enriched?.title || "Executive",
+      company: p.organization?.name || enriched?.organization?.name || "Unknown Company",
+      location: [p.city || enriched?.city, p.country || enriched?.country].filter(Boolean).join(", ") || "",
+      email: realEmail || "Email not available — enrich manually in Apollo",
+      recentActivity: p.headline || enriched?.headline || "",
       status: "Pending",
-      expatScore: hasExpatFilters ? await scoreExpat(p) : null,
+      organization: p.organization || enriched?.organization,
+      languages: p.languages || enriched?.languages,
+      education: p.education || enriched?.education,
     };
+
+    if (hasExpatFilters) {
+      const passes = await filterWithClaude(prospect, { orgLocations, languages, education });
+      if (!passes) {
+        filtered++;
+        addLog(`Filtered out: ${name} (does not match expat criteria)`, 55 + Math.round((i+1)/apolloResults.length * 20));
+        continue;
+      }
+    }
+
+    prospect.expatScore = hasExpatFilters ? await scoreExpat(p) : null;
     const msg = await callClaude(prospect);
     prospect.message = msg;
     newProspects.push(prospect);
-    addLog(`${hasExpatFilters && prospect.expatScore ? `[${prospect.expatScore}] ` : ""}Generated email for ${name}`, 60 + Math.round((i+1)/apolloResults.length * 35));
+    addLog(`${prospect.expatScore ? `[${prospect.expatScore}] ` : ""}Generated email for ${name}`, 60 + Math.round((i+1)/apolloResults.length * 35));
     await new Promise(r=>setTimeout(r,300));
   }
+
+  if (filtered > 0) addLog(`Filtered out ${filtered} prospect(s) that didn't match your expat criteria`, 95);
 
   addLog(`Done — ${newProspects.length} prospects ready for review`, 100);
   const existingIds = new Set(prospects.map(p=>p.id));
@@ -583,7 +605,55 @@ async function runSearch() {
   showNotif(`${newProspects.length} prospects ready for review`);
 }
 
-async function scoreExpat(p) {
+async function enrichProspect(apolloId) {
+  try {
+    const res = await fetch(APOLLO_PROXY, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Target": "enrich" },
+      body: JSON.stringify({ id: apolloId, reveal_personal_emails: true })
+    });
+    const data = await res.json();
+    return data.person || null;
+  } catch { return null; }
+}
+  try {
+    const { orgLocations, languages, education } = criteria;
+    if (!orgLocations.length && !languages.length && !education.length) return true;
+
+    const res = await fetch(APOLLO_PROXY, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Target": "claude" },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 50,
+        system: `You are a strict data filter. Based on the prospect profile, determine if they match the given criteria. Rules:
+- For each criterion (education country, languages, company HQ), the prospect must match AT LEAST ONE of the listed options — not all of them.
+- If data is missing or unclear for a criterion, give benefit of the doubt and consider it a match.
+- Reply with ONLY "YES" if they match (or data is insufficient to reject) or "NO" if they clearly do not match.`,
+        messages: [{
+          role: "user", content: `Prospect:
+- Name: ${prospect.name}
+- Title: ${prospect.title}
+- Company: ${prospect.company}
+- Company HQ: ${prospect.organization?.primary_domain || "unknown"}
+- Location: ${prospect.location}
+- Languages: ${prospect.languages?.join(", ") || "unknown"}
+- Education: ${prospect.education?.map(e => e.school?.location || e.school?.name).filter(Boolean).join(", ") || "unknown"}
+
+Criteria to check (match AT LEAST ONE from each non-empty list):
+${education.length ? `- Studied in one of: ${education.join(", ")}` : ""}
+${languages.length ? `- Speaks at least one of: ${languages.join(", ")}` : ""}
+${orgLocations.length ? `- Company HQ in one of: ${orgLocations.join(", ")}` : ""}
+
+Does this prospect match? Reply YES or NO only.`
+        }]
+      })
+    });
+    const data = await res.json();
+    const answer = data.content?.[0]?.text?.trim().toUpperCase();
+    return answer !== "NO";
+  } catch { return true; }
+}
   try {
     const res = await fetch(APOLLO_PROXY, {
       method: "POST",

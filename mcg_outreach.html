@@ -512,6 +512,11 @@ async function runSearch() {
   var existingNames = new Set(prox.map(function(p) { return p.name.toLowerCase().trim(); }));
 
   var res = [], page = 1, maxPages = 10;
+  var existingKeys = new Set(prox.map(dedupKey));
+  var existingNames = new Set(prox.map(function(p) { return p.name.toLowerCase().trim(); }));
+  // also index by first name only as a loose pre-filter
+  var existingFirstNames = new Set(prox.map(function(p) { return p.name.split(" ")[0].toLowerCase().trim(); }));
+
   try {
     while (res.length < n && page <= maxPages) {
       var payload = { person_titles: titles, person_locations: locs, per_page: 25, page: page };
@@ -522,10 +527,15 @@ async function runSearch() {
       if (d.error) { log("Apollo error: " + JSON.stringify(d.error), 30); break; }
       var batch = d.people || [];
       if (!batch.length) { log("No more results from Apollo at page " + page, 30); break; }
+      // loose pre-filter: skip only if first name AND last name both match something in existing
       var fresh = batch.filter(function(r) {
-        var nk = ((r.first_name || "") + " " + (r.last_name || "")).toLowerCase().trim();
+        var fn = (r.first_name || "").toLowerCase().trim();
+        var ln = (r.last_name || "").toLowerCase().trim();
+        var fullKey = (fn + " " + ln).trim();
         var ek = r.email && r.email !== "Not available" ? r.email.toLowerCase().trim() : null;
-        return !existingNames.has(nk) && (!ek || !existingKeys.has(ek));
+        if (ek && existingKeys.has(ek)) return false;
+        if (fullKey && existingNames.has(fullKey)) return false;
+        return true;
       });
       log("Apollo page " + page + ": " + fresh.length + " new of " + batch.length + " (" + res.length + "/" + n + " collected)", 30);
       res = res.concat(fresh);
@@ -553,10 +563,23 @@ async function runSearch() {
       ? ((en.first_name || fn) + " " + (en.last_name || r.last_name || "")).trim()
       : (fn + " " + (r.last_name || "")).trim() || "Unknown";
 
-    // post-enrichment dedup check
+    // post-enrichment dedup — check full enriched name and email
     if (existingNames.has(fullname.toLowerCase().trim())) {
       log("Skipping " + fullname + " (already in list)", 50);
       filtered++;
+      // fetch one more from next batch to compensate
+      try {
+        var xp = { person_titles: titles_cache, person_locations: locs_cache, per_page: 1, page: page + Math.ceil((i + 2) / 25) };
+        if (org_cache.length) xp.organization_locations = org_cache;
+        if (lang_cache.length) xp.languages = lang_cache;
+        if (edu_cache.length) xp.person_education_locations = edu_cache;
+        var xd = await px("search", xp);
+        var xb = (xd.people || []).filter(function(xr) {
+          var xnk = ((xr.first_name || "") + " " + (xr.last_name || "")).toLowerCase().trim();
+          return !existingNames.has(xnk);
+        });
+        if (xb.length) { res.push(xb[0]); log("Fetched replacement from page " + (page + Math.ceil((i + 2) / 25)), 52); }
+      } catch(e) {}
       continue;
     }
 

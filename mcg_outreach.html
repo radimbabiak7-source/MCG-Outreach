@@ -270,8 +270,8 @@ function render() {
       +'<div class="lbl">Subject</div><input id="es" class="inp" value="'+subj+'" style="margin-bottom:10px">'
       +'<div class="lbl">Message body</div><textarea id="eb" class="inp" rows="10" style="margin-bottom:16px;resize:vertical">'+body+'</textarea>'
       +(tok
-        ?'<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn bg" id="sndbtn" onclick="sendMail('+p.id+')">Send email</button><button class="btn" onclick="setStatus('+p.id+',\'Approved\')">Approve only</button><button class="btn" onclick="setStatus('+p.id+',\'Declined\');goBack()">Decline</button></div>'
-        :'<div style="background:#fff8e1;border-radius:8px;padding:10px 14px;font-size:13px;color:#7a5c00">Connect Gmail to send <button class="btn bc" style="margin-left:8px;font-size:12px;padding:4px 10px" onclick="connectGmail()">Connect</button></div>')
+        ?'<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn bg" id="sndbtn" onclick="sendMail('+p.id+')">Send email</button><button class="btn" onclick="setStatus('+p.id+',\'Approved\')">Approve only</button><button class="btn" onclick="setStatus('+p.id+',\'Declined\');goBack()">Decline</button><button class="btn" style="color:#e24b4a;border-color:#e24b4a" onclick="deleteProspect('+p.id+')">Remove</button></div>'
+        :'<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><div style="background:#fff8e1;border-radius:8px;padding:10px 14px;font-size:13px;color:#7a5c00">Connect Gmail to send <button class="btn bc" style="margin-left:8px;font-size:12px;padding:4px 10px" onclick="connectGmail()">Connect</button></div><button class="btn" style="color:#e24b4a;border-color:#e24b4a" onclick="deleteProspect('+p.id+')">Remove</button></div>')
       +'</div></div>';
     return;
   }
@@ -286,7 +286,7 @@ function render() {
       +av(p.name,true)
       +'<div style="flex:1;min-width:0"><div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px"><span style="font-weight:500;font-size:14px">'+p.name+'</span><span style="font-size:12px;color:#888">'+p.title+'</span></div>'
       +'<div style="font-size:12px;color:#aaa">'+p.company+' &middot; '+p.location+'</div></div>'
-      +'<div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">'+badge(p.status)+'<div style="font-size:11px;color:#aaa">'+p.email+'</div></div>'
+      +'<div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">'+badge(p.status)+'<div style="font-size:11px;color:#aaa">'+p.email+'</div><button onclick="event.stopPropagation();deleteProspect('+p.id+')" style="background:none;border:none;cursor:pointer;color:#ccc;font-size:11px;font-family:inherit;padding:0" title="Remove">✕ remove</button></div>'
       +'</div>';
   }).join("");
 }
@@ -294,7 +294,12 @@ function render() {
 function pick(id) { sel=id; render(); }
 function goBack() { sel=null; render(); }
 
-function setStatus(id, s) {
+function deleteProspect(id) {
+  prox = prox.filter(function(p){ return p.id !== id; });
+  saveProspects(); upStats();
+  sel = null; render();
+  notif("Prospect removed");
+}
   prox = prox.map(function(p){return p.id===id?Object.assign({},p,{status:s}):p;});
   saveProspects(); upStats(); render();
 }
@@ -545,21 +550,7 @@ async function runSearch() {
   }
   if(filtered>0)log("Filtered out "+filtered+" prospects",97);
   log("Done — "+newp.length+" prospects ready",100);
-  // final dedup gate using the now-enriched email and full name
-  var finalKeys = new Set(prox.map(dedupKey));
-  var skipped = 0;
-  newp.forEach(function(p) {
-    var k = dedupKey(p);
-    var nameK = p.name.toLowerCase().trim();
-    if (!finalKeys.has(k) && !finalKeys.has(nameK)) {
-      prox.push(p);
-      finalKeys.add(k);
-      finalKeys.add(nameK);
-    } else {
-      skipped++;
-    }
-  });
-  if (skipped > 0) log("Final dedup removed "+skipped+" duplicate(s)", 99);
+  newp.forEach(function(p) { prox.push(p); });
   saveProspects();
   upStats();
   btn.disabled=false; btn.textContent="Search + generate messages";

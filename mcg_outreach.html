@@ -449,36 +449,31 @@ async function runSearch() {
   document.getElementById("lb").innerHTML="";
   document.getElementById("pf").classList.remove("done");
   log("Searching ["+titles.slice(0,2).join(", ")+"] in ["+locs.slice(0,2).join(", ")+"]...",10);
-  var res=[], page=1, totalAvailable=0;
+  var res=[], page=1;
   var existingKeys = new Set(prox.map(dedupKey));
   try {
-    // fetch pages until we have enough non-duplicate raw results to fill n slots
-    while(res.length < n * 2) {
-      var payload={person_titles:titles,person_locations:locs,per_page:Math.min(n*2,50),page:page};
+    while(res.length < n) {
+      var payload={person_titles:titles,person_locations:locs,per_page:25,page:page};
       if(org.length)payload.organization_locations=org;
       if(lang.length)payload.languages=lang;
       if(edu.length)payload.person_education_locations=edu;
       var d = await px("search",payload);
       if(d.error){log("Apollo error: "+JSON.stringify(d.error),30);break;}
       var batch = d.people||[];
-      totalAvailable = d.pagination?d.pagination.total_entries:batch.length;
       if(!batch.length) break;
-      // only keep results not already in our list
       var fresh = batch.filter(function(r){
-        var tempKey = (r.email&&r.email!=="Not available")
-          ? r.email.toLowerCase().trim()
-          : ((r.first_name||"")+" "+(r.last_name||"")+"|"+(r.organization?r.organization.name:"")).toLowerCase().trim();
-        return !existingKeys.has(tempKey);
+        var nameKey = ((r.first_name||"")+" "+(r.last_name||"")+"|"+(r.organization?r.organization.name:"")).toLowerCase().trim();
+        var emailKey = r.email&&r.email!=="Not available"?r.email.toLowerCase().trim():null;
+        return !existingKeys.has(nameKey) && (!emailKey||!existingKeys.has(emailKey));
       });
+      log("Apollo page "+page+": "+fresh.length+" new of "+batch.length+" returned"+(d.pagination?" ("+d.pagination.total_entries+" total)":""),30);
       res = res.concat(fresh);
-      log("Apollo page "+page+": "+fresh.length+" new / "+batch.length+" returned ("+totalAvailable+" total available)",30);
-      if(batch.length < payload.per_page) break; // no more pages
-      if(res.length >= n) break; // have enough fresh ones
+      if(batch.length < 25) break; // no more pages
+      if(res.length >= n) break;
       page++;
-      await new Promise(function(r){setTimeout(r,300);});
+      await new Promise(function(r){setTimeout(r,400);});
     }
   } catch(e){log("Connection error: "+e.message,30);}
-  // trim to exactly n
   res = res.slice(0, n);
   if(!res.length){log("No new results — all prospects already in your list or try broader criteria",100);btn.disabled=false;btn.textContent="Search + generate messages";return;}
   var crit={org:org,lang:lang,edu:edu};
@@ -524,13 +519,7 @@ async function runSearch() {
   }
   if(filtered>0)log("Filtered out "+filtered+" prospects",97);
   log("Done — "+newp.length+" prospects ready",100);
-  var dupes = 0;
-  newp.forEach(function(p) {
-    var k = dedupKey(p);
-    if (!existingKeys.has(k)) { prox.push(p); existingKeys.add(k); }
-    else { dupes++; }
-  });
-  if (dupes > 0) log("Skipped "+dupes+" duplicate(s) already in your list", 99);
+  newp.forEach(function(p) { prox.push(p); });
   saveProspects();
   upStats();
   btn.disabled=false; btn.textContent="Search + generate messages";

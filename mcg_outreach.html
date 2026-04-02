@@ -558,9 +558,10 @@ async function runSearch() {
     const name = `${p.first_name||""} ${p.last_name||""}`.trim() || "Unknown";
     // Auto-enrich to get full name and real email
     addLog(`Enriching ${name}...`, 60 + Math.round((i+1)/apolloResults.length * 10));
-    const enriched = await enrichProspect(p.id);
-    const fullName = enriched ? `${enriched.first_name||""} ${enriched.last_name||""}`.trim() : name;
+    const enriched = await enrichProspect(p);
+    const fullName = enriched ? `${enriched.first_name||p.first_name||""} ${enriched.last_name||""}`.trim() : name;
     const realEmail = enriched?.email || enriched?.personal_emails?.[0] || null;
+    if (enriched) addLog(`Got full profile for ${fullName}${realEmail ? " + email" : " (no email available)"}`, 60 + Math.round((i+1)/apolloResults.length * 10));
 
     const prospect = {
       id: Date.now() + i,
@@ -605,12 +606,20 @@ async function runSearch() {
   showNotif(`${newProspects.length} prospects ready for review`);
 }
 
-async function enrichProspect(apolloId) {
+async function enrichProspect(p) {
   try {
     const res = await fetch(APOLLO_PROXY, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Target": "enrich" },
-      body: JSON.stringify({ id: apolloId, reveal_personal_emails: true })
+      body: JSON.stringify({
+        id: p.id,
+        first_name: p.first_name,
+        last_name: p.last_name_obfuscated ? undefined : p.last_name,
+        organization_name: p.organization?.name,
+        domain: p.organization?.primary_domain,
+        reveal_personal_emails: true,
+        reveal_phone_number: false
+      })
     });
     const data = await res.json();
     return data.person || null;

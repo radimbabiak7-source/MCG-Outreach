@@ -511,24 +511,37 @@ async function runSearch() {
   var existingKeys = new Set(prox.map(dedupKey));
   var existingNames = new Set(prox.map(function(p) { return p.name.toLowerCase().trim(); }));
 
-  var res = [], page = 1, maxPages = 10;
+  // search country by country to avoid Apollo recycling the same results
+  var res = [], seenIds = new Set();
   var existingKeys = new Set(prox.map(dedupKey));
   var existingNames = new Set(prox.map(function(p) { return p.name.toLowerCase().trim(); }));
-  // also index by first name only as a loose pre-filter
-  var existingFirstNames = new Set(prox.map(function(p) { return p.name.split(" ")[0].toLowerCase().trim(); }));
+  var targetPool = n * 4;
+
+  var searchLocs = locs.length ? locs : [""];
+  var locIndex = 0, locPage = 1;
 
   try {
-    while (res.length < n && page <= maxPages) {
-      var payload = { person_titles: titles, person_locations: locs, per_page: 25, page: page };
+    while (res.length < targetPool && locIndex < searchLocs.length) {
+      var currentLoc = searchLocs[locIndex];
+      var payload = { person_titles: titles, person_locations: currentLoc ? [currentLoc] : locs, per_page: 25, page: locPage };
       if (org.length) payload.organization_locations = org;
       if (lang.length) payload.languages = lang;
       if (edu.length) payload.person_education_locations = edu;
+
       var d = await px("search", payload);
-      if (d.error) { log("Apollo error: " + JSON.stringify(d.error), 30); break; }
+      if (d.error) { log("Apollo error for " + currentLoc + ": " + JSON.stringify(d.error), 20); locIndex++; locPage = 1; continue; }
       var batch = d.people || [];
-      if (!batch.length) { log("No more results from Apollo at page " + page, 30); break; }
-      // loose pre-filter: skip only if first name AND last name both match something in existing
+
+      if (!batch.length || locPage > 4) {
+        // move to next country
+        log("Done with " + (currentLoc || "all") + " — moving to next location", 20);
+        locIndex++; locPage = 1; continue;
+      }
+
       var fresh = batch.filter(function(r) {
+        var rid = r.id || ((r.first_name||"")+(r.last_name||"")+(r.organization?r.organization.name:""));
+        if (seenIds.has(rid)) return false;
+        seenIds.add(rid);
         var fn = (r.first_name || "").toLowerCase().trim();
         var ln = (r.last_name || "").toLowerCase().trim();
         var fullKey = (fn + " " + ln).trim();
@@ -537,14 +550,19 @@ async function runSearch() {
         if (fullKey && existingNames.has(fullKey)) return false;
         return true;
       });
-      log("Apollo page " + page + ": " + fresh.length + " new of " + batch.length + " (" + res.length + "/" + n + " collected)", 30);
+
+      log(currentLoc + " page " + locPage + ": " + fresh.length + " new of " + batch.length + " (pool: " + res.length + "/" + targetPool + ")", 20);
       res = res.concat(fresh);
-      if (batch.length < 25) { log("Reached end of Apollo results", 30); break; }
-      if (res.length >= n) break;
-      page++;
-      await new Promise(function(r) { setTimeout(r, 400); });
+      locPage++;
+      await new Promise(function(r) { setTimeout(r, 300); });
     }
   } catch(e) { log("Connection error: " + e.message, 30); }
+
+  if (!res.length) {
+    log("No new results — Apollo has returned all available people for these criteria. Try broader titles, more countries, or remove some filters.", 100);
+    btn.disabled = false; btn.textContent = "Search + generate messages"; return;
+  }
+  log("Pool ready: " + res.length + " candidates across " + searchLocs.length + " locations", 30);
 
   res = res.slice(0, n);
   if (!res.length) { log("No new results — try broader criteria or different locations", 100); btn.disabled = false; btn.textContent = "Search + generate messages"; return; }
@@ -567,19 +585,6 @@ async function runSearch() {
     if (existingNames.has(fullname.toLowerCase().trim())) {
       log("Skipping " + fullname + " (already in list)", 50);
       filtered++;
-      // fetch one more from next batch to compensate
-      try {
-        var xp = { person_titles: titles_cache, person_locations: locs_cache, per_page: 1, page: page + Math.ceil((i + 2) / 25) };
-        if (org_cache.length) xp.organization_locations = org_cache;
-        if (lang_cache.length) xp.languages = lang_cache;
-        if (edu_cache.length) xp.person_education_locations = edu_cache;
-        var xd = await px("search", xp);
-        var xb = (xd.people || []).filter(function(xr) {
-          var xnk = ((xr.first_name || "") + " " + (xr.last_name || "")).toLowerCase().trim();
-          return !existingNames.has(xnk);
-        });
-        if (xb.length) { res.push(xb[0]); log("Fetched replacement from page " + (page + Math.ceil((i + 2) / 25)), 52); }
-      } catch(e) {}
       continue;
     }
 

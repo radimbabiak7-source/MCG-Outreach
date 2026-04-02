@@ -90,7 +90,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
       <option>6</option><option>7</option><option>8</option><option>9</option><option>10</option><option>20</option>
     </select>
   </div>
-  <div class="tip"><strong>Expat targeting:</strong> Company HQ country finds people in SEA working for European/Australian firms. Languages spoken filters for English/Dutch/French speakers. Education country finds people who studied in the West. Claude filters each result — matching at least ONE option per field is enough.</div>
+  <div class="tip"><strong>Expat targeting works across any region.</strong> Company HQ country finds people working locally for foreign firms. Languages spoken filters for non-native speakers. Education country finds people who studied abroad. Claude scores each prospect individually based on their actual location — LATAM, Middle East, SEA, Europe or mixed searches all work. Each prospect is scored with region-specific rules.</div>
   <button class="btn bc" id="sbtn" onclick="runSearch()">Search + generate messages</button>
   <div id="prog-area" style="display:none;margin-top:20px">
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
@@ -159,9 +159,9 @@ function loadProspects() {
 }
 
 function dedupKey(p) {
-  // stable key: email if real, else name+company normalised
+  // prefer email, fall back to normalised first+last name only (ignore company — it can vary)
   if (p.email && p.email !== "Not available") return p.email.toLowerCase().trim();
-  return (p.name + "|" + p.company).toLowerCase().trim();
+  return (p.name || "").toLowerCase().trim();
 }
 
 window.onload = function() {
@@ -394,7 +394,7 @@ async function scoreExpat(p) {
     : "unknown";
 
   var res = await claude(
-    "You are evaluating whether a person has relocated internationally (i.e. they live in a country different from where they are originally from). This is for wealth management outreach targeting internationally mobile professionals in Latin America.\n\nEvaluate FOUR signals in this exact priority order:\n\n1. NAME ORIGIN vs CURRENT LOCATION (strongest signal, can be positive OR negative)\n- A European, Anglo, Asian or non-LATAM name living in a LATAM country → strong positive\n- A clearly local LATAM name (e.g. José García in Mexico, João Silva in Brazil, Carlos Mendoza in Colombia) living in their likely home country → NEGATIVE signal, actively pushes score down\n- Ambiguous or mixed names → neutral\n\n2. EDUCATION COUNTRY vs CURRENT LOCATION (strong positive)\n- Studied in US, UK, Europe, Canada, Australia, Asia and now based in LATAM → strong positive\n- Studied locally or education unknown → neutral\n\n3. LANGUAGES SPOKEN (graduated signal)\n- French, German, Dutch, Czech, Slovak, Polish, or any language not native to LATAM → strong positive\n- English only → weak positive (it's international, not conclusive)\n- Spanish or Portuguese only → neutral, no signal\n\n4. EMPLOYER HOME COUNTRY vs CURRENT LOCATION (weakest, supporting signal only)\n- Working for a firm headquartered outside LATAM while based in LATAM → weak positive\n- Local employer → neutral\n\nWeigh all signals together. A strong negative from signal 1 can only be overcome by strong positives in signals 2 AND 3 combined.\n\nReply in this exact format on two lines:\nRating: High|Medium|Low\nReason: one sentence explaining the key signals that drove the rating",
+    "You are evaluating whether a person has relocated internationally — i.e. they live in a country different from where they originally come from. This is for wealth management outreach targeting internationally mobile professionals.\n\nFirst, identify which region the prospect is currently based in, then apply the appropriate regional rules below.\n\n---\nREGION: LATIN AMERICA (Brazil, Mexico, Colombia, Argentina, Chile, Peru, etc.)\n1. NAME vs LOCATION (strongest, bidirectional)\n   - European/Anglo/Asian name in LATAM → strong positive\n   - Clearly local LATAM name in their likely home country (José García in Mexico, João Silva in Brazil) → NEGATIVE, pushes score down\n2. EDUCATION (strong positive)\n   - Studied in US, UK, Europe, Canada, Australia, Asia → strong positive\n   - Studied locally → neutral\n3. LANGUAGES (graduated)\n   - French, German, Dutch, Czech, Slovak, Polish, any non-LATAM language → strong positive\n   - English only → weak positive\n   - Spanish/Portuguese only → neutral\n4. EMPLOYER HQ vs LOCATION (weak supporting)\n   - Foreign-HQ firm while based in LATAM → weak positive\n\n---\nREGION: MIDDLE EAST (UAE, Saudi Arabia, Qatar, Bahrain, Kuwait, Oman)\n1. NAME vs LOCATION (strong positive)\n   - Western, South Asian, East Asian, or non-Arab name in Gulf country → strong positive (Gulf expat populations are huge)\n   - Arabic name in Gulf → neutral (could be local or expat Arab)\n2. EMPLOYER HQ vs LOCATION (stronger here than other regions)\n   - Company HQ outside Middle East → strong positive\n3. EDUCATION (strong positive)\n   - Studied in US, UK, Europe, Australia, Canada → strong positive\n4. LANGUAGES\n   - Any non-Arabic language → strong positive\n   - Arabic only → neutral\n\n---\nREGION: SOUTHEAST ASIA (Malaysia, Singapore, Thailand, Vietnam, Indonesia, Philippines, etc.)\n1. NAME vs LOCATION (strong positive)\n   - Western or European name in SEA → strong positive\n   - Chinese name in Singapore → neutral (large local Chinese community)\n   - Local SEA name in home country → negative\n2. EDUCATION (strong positive)\n   - Studied in US, UK, Europe, Australia, Canada → strong positive\n3. LANGUAGES\n   - French, German, Dutch, or any non-SEA European language → strong positive\n   - English → weak positive (common regionally)\n   - Local SEA language only → neutral\n4. EMPLOYER HQ vs LOCATION (medium)\n   - European/Australian/North American firm in SEA → medium positive\n\n---\nREGION: EUROPE (UK, Germany, France, Netherlands, Switzerland, etc.)\n1. NAME vs LOCATION (strong positive)\n   - Name origin clearly doesn't match the country they're in (British name in Germany, French name in Netherlands) → strong positive\n   - Name matches country → neutral to slightly negative\n2. EDUCATION (positive)\n   - Studied in a different country from where they now live → positive\n   - US/UK/top European university → positive\n3. LANGUAGES\n   - Speaks multiple European languages → positive\n   - Only local language → neutral\n4. EMPLOYER HQ vs LOCATION (medium)\n   - Company headquartered in different country → medium positive\n\n---\nREGION: OTHER / MIXED\n   - Use general principles: name-location mismatch, foreign education, non-native languages, foreign employer as positive signals\n   - Local name in apparent home country as negative signal\n\n---\nWeigh all signals together using the regional rules. A strong negative from the name signal can only be overcome by strong positives in BOTH education AND languages.\n\nReply in this exact format on two lines:\nRating: High|Medium|Low\nReason: one sentence explaining the key signals that drove the rating",
     "Name: "+name+"\nCurrent location: "+location+"\nCompany: "+company+(companyCountry?"\nCompany HQ: "+companyCountry:"")+"\nLanguages: "+langs+"\nEducation: "+edu
   );
 
@@ -408,15 +408,29 @@ async function scoreExpat(p) {
   return {score:score, reason:reason};
 }
 
-async function filterOk(p, crit) {
+async function filterOk(p, crit, rawApollo, enriched) {
   if (!crit.org.length&&!crit.lang.length&&!crit.edu.length) return true;
+
+  // build education string from both raw and enriched data
+  var eduData = "not available";
+  var eduSources = [];
+  if (rawApollo && rawApollo.education && rawApollo.education.length)
+    eduSources = eduSources.concat(rawApollo.education);
+  if (enriched && enriched.education && enriched.education.length)
+    eduSources = eduSources.concat(enriched.education);
+  if (eduSources.length) {
+    eduData = eduSources.map(function(e){
+      return [e.school, e.school_name, e.degree, e.field_of_study, e.school_location, e.location, e.country]
+        .filter(Boolean).join(" ");
+    }).join(" | ");
+  }
+
   var res = await claude(
-    "You are a strict prospect filter. For each non-empty criteria list, evaluate whether the prospect matches AT LEAST ONE item.\n\nRules:\n- If criteria data IS present in the prospect's profile and does NOT match any item in the list → FAIL that criteria.\n- Only give benefit of the doubt if the specific data point is genuinely ABSENT from their profile (e.g. no education info at all).\n- A person who studied in Italy does NOT pass an education filter for Germany/USA/Netherlands, even if they speak English.\n- All non-empty criteria lists must pass independently.\n- Reply YES (passes all criteria) or NO (fails at least one). One word only.",
+    "You are a strict prospect filter. For each non-empty criteria list, evaluate whether the prospect matches AT LEAST ONE item.\n\nRules:\n- If criteria data IS present in the prospect's profile and does NOT match any item in the list → FAIL that criteria.\n- Only give benefit of the doubt if the specific data point is genuinely ABSENT (e.g. education field says 'not available').\n- A person who studied in Brazil, Italy, or China does NOT pass an education filter for UK/US/Germany/Netherlands — even if they speak English.\n- Each non-empty criteria list must pass independently — passing languages cannot rescue a failed education filter.\n- Reply YES (passes all) or NO (fails at least one). One word only.",
     "Prospect: "+p.name+", "+p.title+" at "+p.company+", "+p.location+"\n"
-    +(crit.edu.length?"Education country filter (must match one — if education info present and doesn't match, FAIL): "+crit.edu.join(", ")+"\n":"")
-    +(crit.lang.length?"Languages filter (must match one — if language info present and doesn't match, FAIL): "+crit.lang.join(", ")+"\n":"")
-    +(crit.org.length?"Company HQ country filter (must match one — if HQ info present and doesn't match, FAIL): "+crit.org.join(", ")+"\n":"")
-    +"Known education info from Apollo: "+(p._r&&p._r.education?JSON.stringify(p._r.education):"not available")+"\n"
+    +(crit.edu.length?"Education country filter (must match one): "+crit.edu.join(", ")+"\nActual education data: "+eduData+"\n":"")
+    +(crit.lang.length?"Languages filter (must match one): "+crit.lang.join(", ")+"\n":"")
+    +(crit.org.length?"Company HQ country filter (must match one): "+crit.org.join(", ")+"\n":"")
     +"YES or NO?"
   );
   return res?res.trim().toUpperCase()!=="NO":true;
@@ -462,7 +476,7 @@ async function runSearch() {
       var batch = d.people||[];
       if(!batch.length) break;
       var fresh = batch.filter(function(r){
-        var nameKey = ((r.first_name||"")+" "+(r.last_name||"")+"|"+(r.organization?r.organization.name:"")).toLowerCase().trim();
+        var nameKey = ((r.first_name||"")+" "+(r.last_name||"")).toLowerCase().trim();
         var emailKey = r.email&&r.email!=="Not available"?r.email.toLowerCase().trim():null;
         return !existingKeys.has(nameKey) && (!emailKey||!existingKeys.has(emailKey));
       });
@@ -506,7 +520,7 @@ async function runSearch() {
 
     var emailStatus = email ? "✓ "+email : "⚠ no email found";
     if(hasExp){
-      var ok=await filterOk(p,crit);
+      var ok=await filterOk(p,crit,r,en);
       if(!ok){filtered++;log("Filtered: "+fullname,60+Math.round((i+1)/res.length*10));continue;}
     }
     var expatResult=hasExp?await scoreExpat(r):null;
@@ -519,7 +533,21 @@ async function runSearch() {
   }
   if(filtered>0)log("Filtered out "+filtered+" prospects",97);
   log("Done — "+newp.length+" prospects ready",100);
-  newp.forEach(function(p) { prox.push(p); });
+  // final dedup gate using the now-enriched email and full name
+  var finalKeys = new Set(prox.map(dedupKey));
+  var skipped = 0;
+  newp.forEach(function(p) {
+    var k = dedupKey(p);
+    var nameK = p.name.toLowerCase().trim();
+    if (!finalKeys.has(k) && !finalKeys.has(nameK)) {
+      prox.push(p);
+      finalKeys.add(k);
+      finalKeys.add(nameK);
+    } else {
+      skipped++;
+    }
+  });
+  if (skipped > 0) log("Final dedup removed "+skipped+" duplicate(s)", 99);
   saveProspects();
   upStats();
   btn.disabled=false; btn.textContent="Search + generate messages";

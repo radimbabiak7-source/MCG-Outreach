@@ -525,7 +525,7 @@ async function runSearch() {
       var currentLoc = searchLocs[locIndex];
       var payload = { person_titles: titles, person_locations: currentLoc ? [currentLoc] : locs, per_page: 25, page: locPage };
       if (org.length) payload.organization_locations = org;
-      if (lang.length) payload.languages = lang;
+      // NOTE: languages not passed to Apollo — it over-restricts results. Claude filters instead.
       if (edu.length) payload.person_education_locations = edu;
 
       var d = await px("search", payload);

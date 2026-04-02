@@ -147,15 +147,24 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 var PROXY = "https://apollo-proxy.radim-babiak7.workers.dev/";
 var tok = null, usr = null, prox = [], filt = "All", sel = null, gsi = false;
 
-function saveProspects() {
+async function saveProspects() {
+  if (!usr) { try { localStorage.setItem("mcg_prospects", JSON.stringify(prox)); } catch(e) {} return; }
+  try { await px("kv-save", { user: usr, prospects: prox }); } catch(e) {}
+  // also keep localStorage as offline fallback
   try { localStorage.setItem("mcg_prospects", JSON.stringify(prox)); } catch(e) {}
 }
 
-function loadProspects() {
+async function loadProspects() {
+  if (!usr) {
+    try { var raw = localStorage.getItem("mcg_prospects"); if (raw) { prox = JSON.parse(raw); upStats(); render(); } } catch(e) {}
+    return;
+  }
   try {
-    var raw = localStorage.getItem("mcg_prospects");
-    if (raw) { prox = JSON.parse(raw); upStats(); }
+    var d = await px("kv-load", { user: usr });
+    if (d.prospects && d.prospects.length) { prox = d.prospects; upStats(); render(); return; }
   } catch(e) {}
+  // fallback to localStorage if KV fails
+  try { var raw = localStorage.getItem("mcg_prospects"); if (raw) { prox = JSON.parse(raw); upStats(); render(); } } catch(e) {}
 }
 
 function dedupKey(p) {
@@ -186,7 +195,7 @@ function connectGmail() {
         tok = r.access_token;
         fetch("https://www.googleapis.com/oauth2/v3/userinfo", {headers:{Authorization:"Bearer "+tok}})
           .then(function(x){return x.json();})
-          .then(function(u){usr=u.email||"Connected";updateGUI();notif("Gmail connected — "+usr);})
+          .then(function(u){usr=u.email||"Connected";updateGUI();notif("Gmail connected — "+usr);loadProspects();})
           .catch(function(){usr="Connected";updateGUI();notif("Gmail connected");});
       }
     });

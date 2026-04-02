@@ -238,7 +238,7 @@ function render() {
       +'<div style="font-size:13px;color:#666">'+p.title+' at '+p.company+'</div>'
       +'<div style="font-size:12px;color:#999">'+p.email+' &middot; '+p.location+'</div></div></div>'
       +(p.signal?'<div class="sig"><span style="font-size:11px;color:#aaa;margin-right:6px">Signal:</span>'+p.signal+'</div>':"")
-      +(p.expat?'<div class="sig"><span style="font-size:11px;color:#aaa;margin-right:6px">Expat likelihood:</span><span style="font-weight:500;color:'+(p.expat==="High"?"#1d9e75":p.expat==="Medium"?"#ba7517":"#a32d2d")+'">'+p.expat+'</span></div>':"")
+      +(p.expat?'<div class="sig"><span style="font-size:11px;color:#aaa;margin-right:6px">International mobility:</span><span style="font-weight:500;color:'+(p.expat==="High"?"#1d9e75":p.expat==="Medium"?"#ba7517":"#a32d2d")+'">'+p.expat+'</span>'+(p.expatReason?'<span style="font-size:12px;color:#aaa;margin-left:8px">· '+p.expatReason+'</span>':'')+' </div>':"")
       +'<div class="card-b"><div style="font-size:11px;font-weight:500;color:#888;letter-spacing:.05em;text-transform:uppercase;margin-bottom:8px">Email — edit then send</div>'
       +'<div class="lbl">Subject</div><input id="es" class="inp" value="'+subj+'" style="margin-bottom:10px">'
       +'<div class="lbl">Message body</div><textarea id="eb" class="inp" rows="10" style="margin-bottom:16px;resize:vertical">'+body+'</textarea>'
@@ -366,8 +366,28 @@ async function genEmail(p) {
 }
 
 async function scoreExpat(p) {
-  var res = await claude("Rate likelihood this person is a Western expat in Southeast Asia. Reply ONLY: High, Medium, or Low.","Name: "+(p.first_name||"")+" "+(p.last_name||"")+"\nTitle: "+(p.title||"")+"\nCompany: "+(p.organization?p.organization.name:"")+"\nLocation: "+(p.city||"")+", "+(p.country||""));
-  return res?res.trim().split(" ")[0]:null;
+  var name = (p.first_name||"")+" "+(p.last_name||"");
+  var company = p.organization?p.organization.name:"";
+  var companyCountry = p.organization?(p.organization.hq_location||p.organization.country||""):"";
+  var location = (p.city||"")+", "+(p.country||"");
+  var langs = (p.languages&&p.languages.length)?p.languages.join(", "):"unknown";
+  var edu = (p.education&&p.education.length)
+    ? p.education.map(function(e){return (e.school||"")+" "+(e.school_location||e.location||"");}).join("; ")
+    : "unknown";
+
+  var res = await claude(
+    "You are evaluating whether a person has relocated internationally (i.e. they live in a country different from where they are originally from). This is for wealth management outreach targeting internationally mobile professionals in Latin America.\n\nEvaluate FOUR signals in this exact priority order:\n\n1. NAME ORIGIN vs CURRENT LOCATION (strongest signal, can be positive OR negative)\n- A European, Anglo, Asian or non-LATAM name living in a LATAM country → strong positive\n- A clearly local LATAM name (e.g. José García in Mexico, João Silva in Brazil, Carlos Mendoza in Colombia) living in their likely home country → NEGATIVE signal, actively pushes score down\n- Ambiguous or mixed names → neutral\n\n2. EDUCATION COUNTRY vs CURRENT LOCATION (strong positive)\n- Studied in US, UK, Europe, Canada, Australia, Asia and now based in LATAM → strong positive\n- Studied locally or education unknown → neutral\n\n3. LANGUAGES SPOKEN (graduated signal)\n- French, German, Dutch, Czech, Slovak, Polish, or any language not native to LATAM → strong positive\n- English only → weak positive (it's international, not conclusive)\n- Spanish or Portuguese only → neutral, no signal\n\n4. EMPLOYER HOME COUNTRY vs CURRENT LOCATION (weakest, supporting signal only)\n- Working for a firm headquartered outside LATAM while based in LATAM → weak positive\n- Local employer → neutral\n\nWeigh all signals together. A strong negative from signal 1 can only be overcome by strong positives in signals 2 AND 3 combined.\n\nReply in this exact format on two lines:\nRating: High|Medium|Low\nReason: one sentence explaining the key signals that drove the rating",
+    "Name: "+name+"\nCurrent location: "+location+"\nCompany: "+company+(companyCountry?"\nCompany HQ: "+companyCountry:"")+"\nLanguages: "+langs+"\nEducation: "+edu
+  );
+
+  if (!res) return {score:"Low", reason:"Insufficient data"};
+  var lines = res.trim().split("\n");
+  var score = "Low", reason = "";
+  for (var i=0; i<lines.length; i++) {
+    if (lines[i].startsWith("Rating:")) score = lines[i].replace("Rating:","").trim().split(" ")[0];
+    if (lines[i].startsWith("Reason:")) reason = lines[i].replace("Reason:","").trim();
+  }
+  return {score:score, reason:reason};
 }
 
 async function filterOk(p, crit) {
@@ -456,8 +476,10 @@ async function runSearch() {
       var ok=await filterOk(p,crit);
       if(!ok){filtered++;log("Filtered: "+fullname,60+Math.round((i+1)/res.length*10));continue;}
     }
-    p.expat=hasExp?await scoreExpat(r):null;
-    log((p.expat?"["+p.expat+"] ":"")+"Generating email for "+fullname+" — "+emailStatus,65+Math.round((i+1)/res.length*30));
+    var expatResult=hasExp?await scoreExpat(r):null;
+    p.expat=expatResult?expatResult.score:null;
+    p.expatReason=expatResult?expatResult.reason:null;
+    log((p.expat?"["+p.expat+"] ":"")+"Generating email for "+fullname+" — "+emailStatus+(p.expatReason?" · "+p.expatReason:""),65+Math.round((i+1)/res.length*30));
     p.msg=await genEmail(p);
     newp.push(p);
     await new Promise(function(r){setTimeout(r,200);});

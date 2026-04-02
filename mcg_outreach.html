@@ -52,6 +52,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .mf{border:0.5px solid #e0dfd8;border-radius:10px;padding:16px;margin-bottom:16px;background:#fff;display:none}
 .mg{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px}
 .empty{text-align:center;padding:48px 0;color:#aaa;font-size:13px}
+.rm{background:none;border:none;cursor:pointer;color:#ccc;font-size:11px;font-family:inherit;padding:0}
+.rm:hover{color:#e24b4a}
 </style>
 </head>
 <body>
@@ -76,11 +78,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 <div id="p-search">
   <div style="font-size:12px;color:#888;margin-bottom:16px">Fill in your criteria. Apollo finds prospects, Claude enriches and filters them, then writes a personalised email for each one.</div>
   <div class="grid2">
-    <div><div class="lbl">Job titles (comma separated)</div><input id="q-titles" class="inp" value="CEO, Founder, Managing Director"></div>
-    <div><div class="lbl">Where prospect is located</div><input id="q-locs" class="inp" placeholder="e.g. Malaysia, Singapore"></div>
+    <div><div class="lbl">Job titles (comma separated)</div><input id="q-titles" class="inp" value="CEO, Founder, Managing Director, CFO, Regional Manager, Partner, General Partner, Managing Partner, Principal, Chairman, Executive Chairman, Board Director, Non-Executive Director, Chief Operating Officer, Chief Commercial Officer, Vice President, Senior Vice President, Executive Vice President, Country Manager, Group CEO, Co-Founder, Executive Director, Owner, Head of Latin America, Latin America Director, Regional Director"></div>
+    <div><div class="lbl">Where prospect is located</div><input id="q-locs" class="inp" placeholder="e.g. Brazil, Colombia, Malaysia"></div>
     <div><div class="lbl">Company HQ country (expat filter)</div><input id="q-orglocs" class="inp" placeholder="e.g. United Kingdom, Netherlands"></div>
-    <div><div class="lbl">Languages spoken (expat filter)</div><input id="q-langs" class="inp" placeholder="e.g. English, Dutch, French"></div>
-    <div><div class="lbl">Education country (expat filter)</div><input id="q-edu" class="inp" placeholder="e.g. United Kingdom, United States"></div>
+    <div><div class="lbl">Languages spoken (expat filter)</div><input id="q-langs" class="inp" placeholder="e.g. English, Dutch, French, German"></div>
+    <div><div class="lbl">Education country (expat filter)</div><input id="q-edu" class="inp" placeholder="e.g. United Kingdom, United States, Germany"></div>
     <div><div class="lbl">Industry (optional)</div><input id="q-ind" class="inp" placeholder="e.g. Private Equity, Family Office"></div>
   </div>
   <div style="margin-bottom:16px">
@@ -146,35 +148,42 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 <script>
 var PROXY = "https://apollo-proxy.radim-babiak7.workers.dev/";
 var tok = null, usr = null, prox = [], filt = "All", sel = null, gsi = false;
+var titles_cache = [], locs_cache = [], org_cache = [], lang_cache = [], edu_cache = [];
+
+// ── Storage ──────────────────────────────────────────────────────────────────
 
 async function saveProspects() {
-  if (!usr) { try { localStorage.setItem("mcg_prospects", JSON.stringify(prox)); } catch(e) {} return; }
-  try { await px("kv-save", { user: usr, prospects: prox }); } catch(e) {}
-  // also keep localStorage as offline fallback
   try { localStorage.setItem("mcg_prospects", JSON.stringify(prox)); } catch(e) {}
+  if (!usr) return;
+  try { await px("kv-save", { user: usr, prospects: prox }); } catch(e) {}
 }
 
 async function loadProspects() {
-  if (!usr) {
-    try { var raw = localStorage.getItem("mcg_prospects"); if (raw) { prox = JSON.parse(raw); upStats(); render(); } } catch(e) {}
-    return;
+  if (usr) {
+    try {
+      var d = await px("kv-load", { user: usr });
+      if (d.prospects && d.prospects.length) {
+        prox = d.prospects; upStats(); render(); return;
+      }
+    } catch(e) {}
   }
   try {
-    var d = await px("kv-load", { user: usr });
-    if (d.prospects && d.prospects.length) { prox = d.prospects; upStats(); render(); return; }
+    var raw = localStorage.getItem("mcg_prospects");
+    if (raw) { prox = JSON.parse(raw); upStats(); render(); }
   } catch(e) {}
-  // fallback to localStorage if KV fails
-  try { var raw = localStorage.getItem("mcg_prospects"); if (raw) { prox = JSON.parse(raw); upStats(); render(); } } catch(e) {}
 }
 
+// ── Dedup ─────────────────────────────────────────────────────────────────────
+
 function dedupKey(p) {
-  // prefer email, fall back to normalised first+last name only (ignore company — it can vary)
   if (p.email && p.email !== "Not available") return p.email.toLowerCase().trim();
   return (p.name || "").toLowerCase().trim();
 }
 
+// ── Gmail ─────────────────────────────────────────────────────────────────────
+
 window.onload = function() {
-  document.getElementById("bio").value = "I am a Private Wealth Manager at Melbourne Capital Group, an award-winning independent financial advisory firm with offices in Kuala Lumpur, Bangkok, Penang, and Melbourne. We specialise in cross-border estate planning, international wills, retirement planning, offshore investment structures, UK pension transfers (QROPS), alternative investments, and family office services. We are a Chartered Insurance Institute International Professional Partner Firm and member of FEIFA. We offer open architecture, independent advice — we are not a bank and we do not sell proprietary products.";
+  document.getElementById("bio").value = "I am a Private Wealth Manager called Radim Babiak at Melbourne Capital Group, an award-winning independent financial advisory firm with offices in Kuala Lumpur, Bangkok, Penang, and Melbourne. We specialise in cross-border estate planning, international wills, retirement planning, offshore investment structures, UK pension transfers (QROPS), alternative investments, and family office services. We are a Chartered Insurance Institute International Professional Partner Firm and member of FEIFA. We offer open architecture, independent advice — we are not a bank and we do not sell proprietary products.";
   loadProspects();
   checkGSI();
 };
@@ -193,158 +202,176 @@ function connectGmail() {
       callback: function(r) {
         if (r.error) { notif("Failed: " + r.error, true); return; }
         tok = r.access_token;
-        fetch("https://www.googleapis.com/oauth2/v3/userinfo", {headers:{Authorization:"Bearer "+tok}})
-          .then(function(x){return x.json();})
-          .then(function(u){usr=u.email||"Connected";updateGUI();notif("Gmail connected — "+usr);loadProspects();})
-          .catch(function(){usr="Connected";updateGUI();notif("Gmail connected");});
+        fetch("https://www.googleapis.com/oauth2/v3/userinfo", { headers: { Authorization: "Bearer " + tok } })
+          .then(function(x) { return x.json(); })
+          .then(function(u) { usr = u.email || "Connected"; updateGUI(); notif("Gmail connected — " + usr); loadProspects(); })
+          .catch(function() { usr = "Connected"; updateGUI(); notif("Gmail connected"); loadProspects(); });
       }
     });
     c.requestAccessToken();
-  } catch(e) { notif("Error: "+e.message, true); }
+  } catch(e) { notif("Error: " + e.message, true); }
 }
 
 function updateGUI() {
   var h = usr
-    ? '<div class="gc"><span style="width:7px;height:7px;border-radius:50%;background:#1d9e75;display:inline-block"></span>'+usr+' <button onclick="disconnectGmail()" style="background:none;border:none;cursor:pointer;color:#888;font-size:11px;margin-left:4px;font-family:inherit">disconnect</button></div>'
+    ? '<div class="gc"><span style="width:7px;height:7px;border-radius:50%;background:#1d9e75;display:inline-block"></span>' + usr + ' <button onclick="disconnectGmail()" style="background:none;border:none;cursor:pointer;color:#888;font-size:11px;margin-left:4px;font-family:inherit">disconnect</button></div>'
     : '<button class="btn bc" onclick="connectGmail()">Connect Gmail</button>';
   document.getElementById("gs").innerHTML = h;
   document.getElementById("gss").innerHTML = h;
   render();
 }
 
-function disconnectGmail() { tok=null; usr=null; updateGUI(); }
+function disconnectGmail() { tok = null; usr = null; updateGUI(); }
+
+// ── Navigation ────────────────────────────────────────────────────────────────
 
 function go(t) {
-  ["search","prospects","settings"].forEach(function(id,i){
-    document.getElementById("p-"+id).style.display = id===t?"block":"none";
-    document.getElementById("t"+i).classList.toggle("on", id===t);
+  ["search", "prospects", "settings"].forEach(function(id, i) {
+    document.getElementById("p-" + id).style.display = id === t ? "block" : "none";
+    document.getElementById("t" + i).classList.toggle("on", id === t);
   });
-  if (t==="prospects") { sel=null; render(); }
+  if (t === "prospects") { sel = null; render(); }
 }
 
 function setF(f) {
-  filt=f;
-  document.querySelectorAll(".fb").forEach(function(b){b.classList.toggle("on",b.textContent.trim()===f);});
+  filt = f;
+  document.querySelectorAll(".fb").forEach(function(b) { b.classList.toggle("on", b.textContent.trim() === f); });
   render();
 }
 
+// ── Stats ─────────────────────────────────────────────────────────────────────
+
 function upStats() {
   document.getElementById("s0").textContent = prox.length;
-  var p = prox.filter(function(x){return x.status==="Pending";}).length;
+  var p = prox.filter(function(x) { return x.status === "Pending"; }).length;
   document.getElementById("s1").textContent = p;
-  document.getElementById("s2").textContent = prox.filter(function(x){return x.status==="Approved";}).length;
-  document.getElementById("s3").textContent = prox.filter(function(x){return x.status==="Sent";}).length;
+  document.getElementById("s2").textContent = prox.filter(function(x) { return x.status === "Approved"; }).length;
+  document.getElementById("s3").textContent = prox.filter(function(x) { return x.status === "Sent"; }).length;
   var pc = document.getElementById("pc");
-  pc.textContent = p; pc.style.display = p>0?"inline":"none";
+  pc.textContent = p; pc.style.display = p > 0 ? "inline" : "none";
 }
 
+// ── UI helpers ────────────────────────────────────────────────────────────────
+
 function badge(s) {
-  var m = {Pending:{bg:"#faeeda",c:"#854f0b",d:"#ba7517"},Approved:{bg:"#e1f5ee",c:"#0f6e56",d:"#1d9e75"},Sent:{bg:"#e6f1fb",c:"#185fa5",d:"#378add"},Declined:{bg:"#fcebeb",c:"#a32d2d",d:"#e24b4a"}};
-  var x = m[s]||m.Pending;
-  return '<span class="bdg" style="background:'+x.bg+';color:'+x.c+'"><span class="dot" style="background:'+x.d+'"></span>'+s+'</span>';
+  var m = { Pending: { bg: "#faeeda", c: "#854f0b", d: "#ba7517" }, Approved: { bg: "#e1f5ee", c: "#0f6e56", d: "#1d9e75" }, Sent: { bg: "#e6f1fb", c: "#185fa5", d: "#378add" }, Declined: { bg: "#fcebeb", c: "#a32d2d", d: "#e24b4a" } };
+  var x = m[s] || m.Pending;
+  return '<span class="bdg" style="background:' + x.bg + ';color:' + x.c + '"><span class="dot" style="background:' + x.d + '"></span>' + s + '</span>';
 }
 
 function av(name, sm) {
-  var i = name.split(" ").map(function(w){return w[0];}).slice(0,2).join("");
-  return '<div class="av'+(sm?" av-sm":"")+'">'+(i||"?")+' </div>';
+  var i = name.split(" ").map(function(w) { return w[0]; }).slice(0, 2).join("");
+  return '<div class="av' + (sm ? " av-sm" : "") + '">' + (i || "?") + '</div>';
 }
+
+// ── Render ────────────────────────────────────────────────────────────────────
 
 function render() {
   var pl = document.getElementById("pl");
   var pd = document.getElementById("pd");
   if (!pl) return;
+
   if (sel) {
-    pl.style.display="none"; pd.style.display="block";
-    var p = prox.find(function(x){return x.id===sel;});
+    pl.style.display = "none"; pd.style.display = "block";
+    var p = prox.find(function(x) { return x.id === sel; });
     if (!p) return;
-    var subj = (p.msg&&p.msg.subject)?p.msg.subject.replace(/"/g,"&quot;"):"";
-    var body = (p.msg&&p.msg.body)?p.msg.body:"";
+    var subj = (p.msg && p.msg.subject) ? p.msg.subject.replace(/"/g, "&quot;") : "";
+    var body = (p.msg && p.msg.body) ? p.msg.body : "";
     pd.innerHTML = '<button class="btn" style="margin-bottom:14px;background:none;border:none;cursor:pointer;color:#888;font-family:inherit" onclick="goBack()">&#8592; Back</button>'
-      +'<div class="card"><div class="card-h">'+av(p.name,false)
-      +'<div style="flex:1"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:3px"><span style="font-weight:500;font-size:15px">'+p.name+'</span>'+badge(p.status)+'</div>'
-      +'<div style="font-size:13px;color:#666">'+p.title+' at '+p.company+'</div>'
-      +'<div style="font-size:12px;color:#999">'+p.email+' &middot; '+p.location+'</div></div></div>'
-      +(p.signal?'<div class="sig"><span style="font-size:11px;color:#aaa;margin-right:6px">Signal:</span>'+p.signal+'</div>':"")
-      +(p.expat?'<div class="sig"><span style="font-size:11px;color:#aaa;margin-right:6px">Expat probability:</span><span style="font-weight:500;color:'+(p.expat==="High"?"#1d9e75":p.expat==="Medium"?"#ba7517":"#a32d2d")+'">'+p.expat+'</span>'+(p.expatReason?'<span style="font-size:12px;color:#aaa;margin-left:8px">· '+p.expatReason+'</span>':'')+' </div>':"")
-      +'<div class="card-b"><div style="font-size:11px;font-weight:500;color:#888;letter-spacing:.05em;text-transform:uppercase;margin-bottom:8px">Email — edit then send</div>'
-      +'<div class="lbl">Subject</div><input id="es" class="inp" value="'+subj+'" style="margin-bottom:10px">'
-      +'<div class="lbl">Message body</div><textarea id="eb" class="inp" rows="10" style="margin-bottom:16px;resize:vertical">'+body+'</textarea>'
-      +(tok
-        ?'<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn bg" id="sndbtn" onclick="sendMail('+p.id+')">Send email</button><button class="btn" onclick="setStatus('+p.id+',\'Approved\')">Approve only</button><button class="btn" onclick="setStatus('+p.id+',\'Declined\');goBack()">Decline</button><button class="btn" style="color:#e24b4a;border-color:#e24b4a" onclick="deleteProspect('+p.id+')">Remove</button></div>'
-        :'<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><div style="background:#fff8e1;border-radius:8px;padding:10px 14px;font-size:13px;color:#7a5c00">Connect Gmail to send <button class="btn bc" style="margin-left:8px;font-size:12px;padding:4px 10px" onclick="connectGmail()">Connect</button></div><button class="btn" style="color:#e24b4a;border-color:#e24b4a" onclick="deleteProspect('+p.id+')">Remove</button></div>')
-      +'</div></div>';
+      + '<div class="card"><div class="card-h">' + av(p.name, false)
+      + '<div style="flex:1"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:3px"><span style="font-weight:500;font-size:15px">' + p.name + '</span>' + badge(p.status) + '</div>'
+      + '<div style="font-size:13px;color:#666">' + p.title + ' at ' + p.company + '</div>'
+      + '<div style="font-size:12px;color:#999">' + p.email + ' &middot; ' + p.location + '</div></div></div>'
+      + (p.signal ? '<div class="sig"><span style="font-size:11px;color:#aaa;margin-right:6px">Signal:</span>' + p.signal + '</div>' : "")
+      + (p.expat ? '<div class="sig"><span style="font-size:11px;color:#aaa;margin-right:6px">Expat probability:</span><span style="font-weight:500;color:' + (p.expat === "High" ? "#1d9e75" : p.expat === "Medium" ? "#ba7517" : "#a32d2d") + '">' + p.expat + '</span>' + (p.expatReason ? '<span style="font-size:12px;color:#aaa;margin-left:8px">· ' + p.expatReason + '</span>' : '') + '</div>' : "")
+      + '<div class="card-b"><div style="font-size:11px;font-weight:500;color:#888;letter-spacing:.05em;text-transform:uppercase;margin-bottom:8px">Email — edit then send</div>'
+      + '<div class="lbl">Subject</div><input id="es" class="inp" value="' + subj + '" style="margin-bottom:10px">'
+      + '<div class="lbl">Message body</div><textarea id="eb" class="inp" rows="10" style="margin-bottom:16px;resize:vertical">' + body + '</textarea>'
+      + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
+      + (tok ? '<button class="btn bg" id="sndbtn" onclick="sendMail(' + p.id + ')">Send email</button>' : '<div style="background:#fff8e1;border-radius:8px;padding:10px 14px;font-size:13px;color:#7a5c00">Connect Gmail to send <button class="btn bc" style="margin-left:8px;font-size:12px;padding:4px 10px" onclick="connectGmail()">Connect</button></div>')
+      + '<button class="btn" onclick="setStatus(' + p.id + ',\'Approved\')">Approve only</button>'
+      + '<button class="btn" onclick="setStatus(' + p.id + ',\'Declined\');goBack()">Decline</button>'
+      + '<button class="btn" style="color:#e24b4a;border-color:#e24b4a;margin-left:auto" onclick="deleteProspect(' + p.id + ')">Remove</button>'
+      + '</div></div></div>';
     return;
   }
-  pl.style.display="block"; pd.style.display="none";
-  var list = prox.filter(function(p){return filt==="All"||p.status===filt;});
+
+  pl.style.display = "block"; pd.style.display = "none";
+  var list = prox.filter(function(p) { return filt === "All" || p.status === filt; });
   if (!list.length) {
-    pl.innerHTML='<div class="empty">'+(prox.length===0?"No prospects yet — run a search to get started":"No prospects match this filter")+'</div>';
+    pl.innerHTML = '<div class="empty">' + (prox.length === 0 ? "No prospects yet — run a search to get started" : "No prospects match this filter") + '</div>';
     return;
   }
-  pl.innerHTML = list.map(function(p){
-    return '<div class="prow" onclick="pick('+p.id+')">'
-      +av(p.name,true)
-      +'<div style="flex:1;min-width:0"><div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px"><span style="font-weight:500;font-size:14px">'+p.name+'</span><span style="font-size:12px;color:#888">'+p.title+'</span></div>'
-      +'<div style="font-size:12px;color:#aaa">'+p.company+' &middot; '+p.location+'</div></div>'
-      +'<div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">'+badge(p.status)+'<div style="font-size:11px;color:#aaa">'+p.email+'</div><button onclick="event.stopPropagation();deleteProspect('+p.id+')" style="background:none;border:none;cursor:pointer;color:#ccc;font-size:11px;font-family:inherit;padding:0" title="Remove">✕ remove</button></div>'
-      +'</div>';
+  pl.innerHTML = list.map(function(p) {
+    return '<div class="prow" onclick="pick(' + p.id + ')">'
+      + av(p.name, true)
+      + '<div style="flex:1;min-width:0"><div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px"><span style="font-weight:500;font-size:14px">' + p.name + '</span><span style="font-size:12px;color:#888">' + p.title + '</span></div>'
+      + '<div style="font-size:12px;color:#aaa">' + p.company + ' &middot; ' + p.location + '</div></div>'
+      + '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">'
+      + badge(p.status)
+      + '<div style="font-size:11px;color:#aaa">' + p.email + '</div>'
+      + '<button class="rm" onclick="event.stopPropagation();deleteProspect(' + p.id + ')">✕ remove</button>'
+      + '</div></div>';
   }).join("");
 }
 
-function pick(id) { sel=id; render(); }
-function goBack() { sel=null; render(); }
+function pick(id) { sel = id; render(); }
+function goBack() { sel = null; render(); }
 
-function deleteProspect(id) {
-  prox = prox.filter(function(p){ return p.id !== id; });
-  saveProspects(); upStats();
-  sel = null; render();
-  notif("Prospect removed");
-}
-  prox = prox.map(function(p){return p.id===id?Object.assign({},p,{status:s}):p;});
+function setStatus(id, s) {
+  prox = prox.map(function(p) { return p.id === id ? Object.assign({}, p, { status: s }) : p; });
   saveProspects(); upStats(); render();
 }
 
+function deleteProspect(id) {
+  prox = prox.filter(function(p) { return p.id !== id; });
+  saveProspects(); upStats(); sel = null; render();
+  notif("Prospect removed");
+}
+
+// ── Send email ────────────────────────────────────────────────────────────────
+
 async function sendMail(id) {
   if (!tok) { notif("Connect Gmail first", true); return; }
-  var p = prox.find(function(x){return x.id===id;});
+  var p = prox.find(function(x) { return x.id === id; });
   if (!p) return;
   var subj = document.getElementById("es").value;
   var body = document.getElementById("eb").value;
   var btn = document.getElementById("sndbtn");
-  btn.textContent="Sending..."; btn.disabled=true;
+  btn.textContent = "Sending..."; btn.disabled = true;
   try {
-    var raw = ["To: "+p.email,"Subject: "+subj,"Content-Type: text/plain; charset=utf-8","MIME-Version: 1.0","",body].join("\n");
-    var enc = btoa(unescape(encodeURIComponent(raw))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
-    var r = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send",{
-      method:"POST",
-      headers:{Authorization:"Bearer "+tok,"Content-Type":"application/json"},
-      body:JSON.stringify({raw:enc})
+    var raw = ["To: " + p.email, "Subject: " + subj, "Content-Type: text/plain; charset=utf-8", "MIME-Version: 1.0", "", body].join("\n");
+    var enc = btoa(unescape(encodeURIComponent(raw))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    var r = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + tok, "Content-Type": "application/json" },
+      body: JSON.stringify({ raw: enc })
     });
-    if (r.ok) { setStatus(id,"Sent"); notif("Email sent to "+p.name.split(" ")[0]); sel=null; render(); }
+    if (r.ok) { setStatus(id, "Sent"); notif("Email sent to " + p.name.split(" ")[0]); sel = null; render(); }
     else {
       var err = await r.json();
-      if (err.error&&err.error.code===401) { tok=null; usr=null; updateGUI(); notif("Gmail expired — reconnect",true); }
-      else { notif("Failed: "+(err.error?err.error.message:"unknown"),true); btn.textContent="Send email"; btn.disabled=false; }
+      if (err.error && err.error.code === 401) { tok = null; usr = null; updateGUI(); notif("Gmail expired — reconnect", true); }
+      else { notif("Failed: " + (err.error ? err.error.message : "unknown"), true); btn.textContent = "Send email"; btn.disabled = false; }
     }
-  } catch(e) { notif("Error: "+e.message,true); btn.textContent="Send email"; btn.disabled=false; }
+  } catch(e) { notif("Error: " + e.message, true); btn.textContent = "Send email"; btn.disabled = false; }
 }
 
+// ── Proxy ─────────────────────────────────────────────────────────────────────
+
 async function px(target, body) {
-  var r = await fetch(PROXY,{method:"POST",headers:{"Content-Type":"application/json","X-Target":target},body:JSON.stringify(body)});
+  var r = await fetch(PROXY, { method: "POST", headers: { "Content-Type": "application/json", "X-Target": target }, body: JSON.stringify(body) });
   return r.json();
 }
 
-// ── FIXED: exhaustive email extraction from any Apollo response shape ──
+// ── Email extraction ──────────────────────────────────────────────────────────
+
 function extractEmail(obj) {
   if (!obj) return null;
-  // Priority order: verified work email > personal emails array > email field > account email
   var candidates = [
-    obj.email,
-    obj.work_email,
-    obj.corporate_email,
+    obj.email, obj.work_email, obj.corporate_email,
     (obj.personal_emails && obj.personal_emails.length) ? obj.personal_emails[0] : null,
     (obj.account && obj.account.email) ? obj.account.email : null,
-    (obj.contact && obj.contact.email) ? obj.contact.email : null,
+    (obj.contact && obj.contact.email) ? obj.contact.email : null
   ];
   for (var i = 0; i < candidates.length; i++) {
     var e = candidates[i];
@@ -354,35 +381,30 @@ function extractEmail(obj) {
 }
 
 function isPlaceholder(email) {
-  // Reject obviously guessed/pattern emails Apollo sometimes returns
-  var lower = email.toLowerCase();
-  return (
-    lower.indexOf("@example.") > -1 ||
-    lower.indexOf("@domain.") > -1 ||
-    lower.indexOf("placeholder") > -1 ||
-    lower.indexOf("noemail") > -1
-  );
+  var l = email.toLowerCase();
+  return l.indexOf("@example.") > -1 || l.indexOf("@domain.") > -1 || l.indexOf("placeholder") > -1 || l.indexOf("noemail") > -1;
 }
+
+// ── Apollo ────────────────────────────────────────────────────────────────────
 
 async function enrich(p) {
   try {
     var d = await px("enrich", {
-      id: p.id,
-      first_name: p.first_name,
-      last_name: p.last_name,
+      id: p.id, first_name: p.first_name, last_name: p.last_name,
       organization_name: p.organization ? p.organization.name : "",
       domain: p.organization ? p.organization.primary_domain : "",
-      reveal_personal_emails: true,
-      reveal_phone_number: false
+      reveal_personal_emails: true, reveal_phone_number: false
     });
     return d.person || null;
   } catch(e) { return null; }
 }
 
+// ── Claude ────────────────────────────────────────────────────────────────────
+
 async function claude(sys, msg) {
   try {
-    var d = await px("claude",{model:"claude-sonnet-4-20250514",max_tokens:500,system:sys,messages:[{role:"user",content:msg}]});
-    return d.content&&d.content[0]?d.content[0].text:null;
+    var d = await px("claude", { model: "claude-sonnet-4-20250514", max_tokens: 500, system: sys, messages: [{ role: "user", content: msg }] });
+    return d.content && d.content[0] ? d.content[0].text : null;
   } catch(e) { return null; }
 }
 
@@ -390,198 +412,236 @@ async function genEmail(p) {
   var bio = document.getElementById("bio").value;
   var res = await claude(
     "You are writing a cold outreach email on behalf of a Private Wealth Manager at Melbourne Capital Group (MCG). MCG is an independent financial advisory firm specialising in cross-border estate planning, offshore investment structures, retirement planning, UK pension transfers (QROPS), and family office services — primarily for internationally mobile professionals.\n\nThe email must follow this exact structure:\n1. PERSONAL HOOK (1 sentence): Something specific and concrete about THIS person — a career move, a company they used to work for, the country they relocated from, or an interesting detail from their background. Never generic. Never 'I noticed you have been living offshore for a while.'\n2. INTRO (1 sentence): Who you are and what MCG does — one sentence, no awards, no bullet points, no Google reviews, no feature lists.\n3. POSITIONING (1-2 sentences): You are not trying to sell anything. You just want to see if there is a fit and whether you might be able to help, given their international situation.\n4. ASK (1 sentence): Suggest a brief informal call. No specific times, no '30-40 minutes Teams call' energy. Keep it light.\n\nHard rules:\n- 70-90 words body maximum\n- No bullet points ever\n- No 'award-winning', no Google reviews, no feature lists\n- No 'Thank you for connecting', 'I hope this finds you well', 'I wanted to reach out'\n- No corporate buzzwords: synergy, leverage, touch base, circle back, journey, space\n- Peer-to-peer tone — one professional writing to another, not a salesperson pitching a prospect\n- Sign off with 'Best regards,' on one line, then 'Radim' on the next line, then 'Melbourne Capital Group' on the final line\n- Return ONLY valid JSON: {\"subject\":\"...\",\"body\":\"...\"}",
-    "Prospect: "+p.name+", "+p.title+" at "+p.company+", "+p.location+"\nBackground/signal: "+(p.signal||p.title+" at "+p.company)+(p.expat?"\nExpat probability: "+p.expat+(p.expatReason?" ("+p.expatReason+")":""): "")+"\nSender bio: "+bio+"\nReturn only JSON."
+    "Prospect: " + p.name + ", " + p.title + " at " + p.company + ", " + p.location + "\nBackground/signal: " + (p.signal || p.title + " at " + p.company) + (p.expat ? "\nExpat probability: " + p.expat + (p.expatReason ? " (" + p.expatReason + ")" : "") : "") + "\nSender bio: " + bio + "\nReturn only JSON."
   );
-  if (!res) return {subject:"A quick note, "+p.name.split(" ")[0],body:"Hi "+p.name.split(" ")[0]+",\n\nI came across your profile and was impressed by your career at "+p.company+". I work with internationally mobile professionals on cross-border wealth structuring and estate planning — not to sell anything, just to see if there is a fit worth exploring.\n\nWould a brief call make sense?\n\nBest regards,\nRadim\nMelbourne Capital Group"};
-  try { return JSON.parse(res.replace(/```json|```/g,"").trim()); }
-  catch(e) { return {subject:"A thought for you, "+p.name.split(" ")[0],body:res}; }
+  if (!res) return {
+    subject: "A quick note, " + p.name.split(" ")[0],
+    body: "Hi " + p.name.split(" ")[0] + ",\n\nI came across your profile and was impressed by your career at " + p.company + ". I work with internationally mobile professionals on cross-border wealth structuring and estate planning — not to sell anything, just to see if there is a fit worth exploring.\n\nWould a brief call make sense?\n\nBest regards,\nRadim\nMelbourne Capital Group"
+  };
+  try { return JSON.parse(res.replace(/```json|```/g, "").trim()); }
+  catch(e) { return { subject: "A quick note, " + p.name.split(" ")[0], body: res }; }
 }
 
 async function scoreExpat(p) {
-  var name = (p.first_name||"")+" "+(p.last_name||"");
-  var company = p.organization?p.organization.name:"";
-  var companyCountry = p.organization?(p.organization.hq_location||p.organization.country||""):"";
-  var location = (p.city||"")+", "+(p.country||"");
-  var langs = (p.languages&&p.languages.length)?p.languages.join(", "):"unknown";
-  var edu = (p.education&&p.education.length)
-    ? p.education.map(function(e){return (e.school||"")+" "+(e.school_location||e.location||"");}).join("; ")
+  var name = (p.first_name || "") + " " + (p.last_name || "");
+  var company = p.organization ? p.organization.name : "";
+  var companyCountry = p.organization ? (p.organization.hq_location || p.organization.country || "") : "";
+  var location = (p.city || "") + ", " + (p.country || "");
+  var langs = (p.languages && p.languages.length) ? p.languages.join(", ") : "unknown";
+  var edu = (p.education && p.education.length)
+    ? p.education.map(function(e) { return (e.school || "") + " " + (e.school_location || e.location || ""); }).join("; ")
     : "unknown";
 
   var res = await claude(
-    "You are evaluating whether a person has relocated internationally — i.e. they live in a country different from where they originally come from. This is for wealth management outreach targeting internationally mobile professionals.\n\nFirst, identify which region the prospect is currently based in, then apply the appropriate regional rules below.\n\n---\nREGION: LATIN AMERICA (Brazil, Mexico, Colombia, Argentina, Chile, Peru, etc.)\n1. NAME vs LOCATION (strongest, bidirectional)\n   - European/Anglo/Asian name in LATAM → strong positive\n   - Clearly local LATAM name in their likely home country (José García in Mexico, João Silva in Brazil) → NEGATIVE, pushes score down\n2. EDUCATION (strong positive)\n   - Studied in US, UK, Europe, Canada, Australia, Asia → strong positive\n   - Studied locally → neutral\n3. LANGUAGES (graduated)\n   - French, German, Dutch, Czech, Slovak, Polish, any non-LATAM language → strong positive\n   - English only → weak positive\n   - Spanish/Portuguese only → neutral\n4. EMPLOYER HQ vs LOCATION (weak supporting)\n   - Foreign-HQ firm while based in LATAM → weak positive\n\n---\nREGION: MIDDLE EAST (UAE, Saudi Arabia, Qatar, Bahrain, Kuwait, Oman)\n1. NAME vs LOCATION (strong positive)\n   - Western, South Asian, East Asian, or non-Arab name in Gulf country → strong positive (Gulf expat populations are huge)\n   - Arabic name in Gulf → neutral (could be local or expat Arab)\n2. EMPLOYER HQ vs LOCATION (stronger here than other regions)\n   - Company HQ outside Middle East → strong positive\n3. EDUCATION (strong positive)\n   - Studied in US, UK, Europe, Australia, Canada → strong positive\n4. LANGUAGES\n   - Any non-Arabic language → strong positive\n   - Arabic only → neutral\n\n---\nREGION: SOUTHEAST ASIA (Malaysia, Singapore, Thailand, Vietnam, Indonesia, Philippines, etc.)\n1. NAME vs LOCATION (strong positive)\n   - Western or European name in SEA → strong positive\n   - Chinese name in Singapore → neutral (large local Chinese community)\n   - Local SEA name in home country → negative\n2. EDUCATION (strong positive)\n   - Studied in US, UK, Europe, Australia, Canada → strong positive\n3. LANGUAGES\n   - French, German, Dutch, or any non-SEA European language → strong positive\n   - English → weak positive (common regionally)\n   - Local SEA language only → neutral\n4. EMPLOYER HQ vs LOCATION (medium)\n   - European/Australian/North American firm in SEA → medium positive\n\n---\nREGION: EUROPE (UK, Germany, France, Netherlands, Switzerland, etc.)\n1. NAME vs LOCATION (strong positive)\n   - Name origin clearly doesn't match the country they're in (British name in Germany, French name in Netherlands) → strong positive\n   - Name matches country → neutral to slightly negative\n2. EDUCATION (positive)\n   - Studied in a different country from where they now live → positive\n   - US/UK/top European university → positive\n3. LANGUAGES\n   - Speaks multiple European languages → positive\n   - Only local language → neutral\n4. EMPLOYER HQ vs LOCATION (medium)\n   - Company headquartered in different country → medium positive\n\n---\nREGION: OTHER / MIXED\n   - Use general principles: name-location mismatch, foreign education, non-native languages, foreign employer as positive signals\n   - Local name in apparent home country as negative signal\n\n---\nWeigh all signals together using the regional rules. A strong negative from the name signal can only be overcome by strong positives in BOTH education AND languages.\n\nReply in this exact format on two lines:\nRating: High|Medium|Low\nReason: one sentence explaining the key signals that drove the rating",
-    "Name: "+name+"\nCurrent location: "+location+"\nCompany: "+company+(companyCountry?"\nCompany HQ: "+companyCountry:"")+"\nLanguages: "+langs+"\nEducation: "+edu
+    "You are evaluating whether a person has relocated internationally — i.e. they live in a country different from where they originally come from. This is for wealth management outreach targeting internationally mobile professionals.\n\nFirst, identify which region the prospect is currently based in, then apply the appropriate regional rules below.\n\n---\nREGION: LATIN AMERICA (Brazil, Mexico, Colombia, Argentina, Chile, Peru, etc.)\n1. NAME vs LOCATION (strongest, bidirectional)\n   - European/Anglo/Asian name in LATAM → strong positive\n   - Clearly local LATAM name in their likely home country (José García in Mexico, João Silva in Brazil) → NEGATIVE, pushes score down\n2. EDUCATION (strong positive)\n   - Studied in US, UK, Europe, Canada, Australia, Asia → strong positive\n   - Studied locally → neutral\n3. LANGUAGES (graduated)\n   - French, German, Dutch, Czech, Slovak, Polish, any non-LATAM language → strong positive\n   - English only → weak positive\n   - Spanish/Portuguese only → neutral\n4. EMPLOYER HQ vs LOCATION (weak supporting)\n   - Foreign-HQ firm while based in LATAM → weak positive\n\n---\nREGION: MIDDLE EAST (UAE, Saudi Arabia, Qatar, Bahrain, Kuwait, Oman)\n1. NAME vs LOCATION (strong positive)\n   - Western, South Asian, East Asian, or non-Arab name in Gulf country → strong positive\n   - Arabic name in Gulf → neutral\n2. EMPLOYER HQ vs LOCATION (stronger here than other regions)\n   - Company HQ outside Middle East → strong positive\n3. EDUCATION (strong positive)\n   - Studied in US, UK, Europe, Australia, Canada → strong positive\n4. LANGUAGES\n   - Any non-Arabic language → strong positive\n   - Arabic only → neutral\n\n---\nREGION: SOUTHEAST ASIA (Malaysia, Singapore, Thailand, Vietnam, Indonesia, Philippines, etc.)\n1. NAME vs LOCATION (strong positive)\n   - Western or European name in SEA → strong positive\n   - Chinese name in Singapore → neutral\n   - Local SEA name in home country → negative\n2. EDUCATION (strong positive)\n   - Studied in US, UK, Europe, Australia, Canada → strong positive\n3. LANGUAGES\n   - French, German, Dutch, or any non-SEA European language → strong positive\n   - English → weak positive\n   - Local SEA language only → neutral\n4. EMPLOYER HQ vs LOCATION (medium)\n   - European/Australian/North American firm in SEA → medium positive\n\n---\nREGION: EUROPE\n1. NAME vs LOCATION (strong positive)\n   - Name origin clearly doesn't match the country (British name in Germany, French name in Netherlands) → strong positive\n   - Name matches country → neutral to slightly negative\n2. EDUCATION\n   - Studied in a different country from where they now live → positive\n3. LANGUAGES\n   - Speaks multiple European languages → positive\n   - Only local language → neutral\n4. EMPLOYER HQ vs LOCATION (medium)\n   - Company headquartered in different country → medium positive\n\n---\nREGION: OTHER / MIXED\n   - Use general principles: name-location mismatch, foreign education, non-native languages, foreign employer as positive signals\n   - Local name in apparent home country as negative signal\n\n---\nA strong negative from the name signal can only be overcome by strong positives in BOTH education AND languages.\n\nReply in this exact format on two lines:\nRating: High|Medium|Low\nReason: one sentence explaining the key signals that drove the rating",
+    "Name: " + name + "\nCurrent location: " + location + "\nCompany: " + company + (companyCountry ? "\nCompany HQ: " + companyCountry : "") + "\nLanguages: " + langs + "\nEducation: " + edu
   );
 
-  if (!res) return {score:"Low", reason:"Insufficient data"};
+  if (!res) return { score: "Low", reason: "Insufficient data" };
   var lines = res.trim().split("\n");
   var score = "Low", reason = "";
-  for (var i=0; i<lines.length; i++) {
-    if (lines[i].startsWith("Rating:")) score = lines[i].replace("Rating:","").trim().split(" ")[0];
-    if (lines[i].startsWith("Reason:")) reason = lines[i].replace("Reason:","").trim();
+  for (var i = 0; i < lines.length; i++) {
+    if (lines[i].startsWith("Rating:")) score = lines[i].replace("Rating:", "").trim().split(" ")[0];
+    if (lines[i].startsWith("Reason:")) reason = lines[i].replace("Reason:", "").trim();
   }
-  return {score:score, reason:reason};
+  return { score: score, reason: reason };
 }
 
 async function filterOk(p, crit, rawApollo, enriched) {
-  if (!crit.org.length&&!crit.lang.length&&!crit.edu.length) return true;
+  if (!crit.org.length && !crit.lang.length && !crit.edu.length) return true;
 
-  // build education string from both raw and enriched data
   var eduData = "not available";
   var eduSources = [];
-  if (rawApollo && rawApollo.education && rawApollo.education.length)
-    eduSources = eduSources.concat(rawApollo.education);
-  if (enriched && enriched.education && enriched.education.length)
-    eduSources = eduSources.concat(enriched.education);
+  if (rawApollo && rawApollo.education && rawApollo.education.length) eduSources = eduSources.concat(rawApollo.education);
+  if (enriched && enriched.education && enriched.education.length) eduSources = eduSources.concat(enriched.education);
   if (eduSources.length) {
-    eduData = eduSources.map(function(e){
-      return [e.school, e.school_name, e.degree, e.field_of_study, e.school_location, e.location, e.country]
-        .filter(Boolean).join(" ");
+    eduData = eduSources.map(function(e) {
+      return [e.school, e.school_name, e.degree, e.field_of_study, e.school_location, e.location, e.country].filter(Boolean).join(" ");
     }).join(" | ");
   }
 
   var res = await claude(
-    "You are a strict prospect filter. For each non-empty criteria list, evaluate whether the prospect matches AT LEAST ONE item.\n\nRules:\n- If criteria data IS present in the prospect's profile and does NOT match any item in the list → FAIL that criteria.\n- Only give benefit of the doubt if the specific data point is genuinely ABSENT (e.g. education field says 'not available').\n- A person who studied in Brazil, Italy, or China does NOT pass an education filter for UK/US/Germany/Netherlands — even if they speak English.\n- Each non-empty criteria list must pass independently — passing languages cannot rescue a failed education filter.\n- Reply YES (passes all) or NO (fails at least one). One word only.",
-    "Prospect: "+p.name+", "+p.title+" at "+p.company+", "+p.location+"\n"
-    +(crit.edu.length?"Education country filter (must match one): "+crit.edu.join(", ")+"\nActual education data: "+eduData+"\n":"")
-    +(crit.lang.length?"Languages filter (must match one): "+crit.lang.join(", ")+"\n":"")
-    +(crit.org.length?"Company HQ country filter (must match one): "+crit.org.join(", ")+"\n":"")
-    +"YES or NO?"
+    "You are a strict prospect filter. For each non-empty criteria list, evaluate whether the prospect matches AT LEAST ONE item.\n\nRules:\n- If criteria data IS present in the prospect's profile and does NOT match any item in the list → FAIL that criteria.\n- Only give benefit of the doubt if the specific data point is genuinely ABSENT (e.g. education field says 'not available').\n- A person who studied in Brazil, Italy, or China does NOT pass an education filter for UK/US/Germany/Netherlands.\n- Each non-empty criteria list must pass independently — passing languages cannot rescue a failed education filter.\n- Reply YES (passes all) or NO (fails at least one). One word only.",
+    "Prospect: " + p.name + ", " + p.title + " at " + p.company + ", " + p.location + "\n"
+    + (crit.edu.length ? "Education country filter (must match one): " + crit.edu.join(", ") + "\nActual education data: " + eduData + "\n" : "")
+    + (crit.lang.length ? "Languages filter (must match one): " + crit.lang.join(", ") + "\n" : "")
+    + (crit.org.length ? "Company HQ country filter (must match one): " + crit.org.join(", ") + "\n" : "")
+    + "YES or NO?"
   );
-  return res?res.trim().toUpperCase()!=="NO":true;
+  return res ? res.trim().toUpperCase() !== "NO" : true;
 }
+
+// ── Log ───────────────────────────────────────────────────────────────────────
 
 function log(msg, pct) {
-  var pf=document.getElementById("pf"), pp=document.getElementById("pp"), lb=document.getElementById("lb");
-  pf.style.width=pct+"%";
-  if(pct>=100)pf.classList.add("done");
-  pp.textContent=pct+"%";
-  document.querySelectorAll(".ll.new").forEach(function(l){l.classList.remove("new");});
-  var l=document.createElement("div");
-  l.className="ll new";
-  l.innerHTML='<span style="opacity:.5;margin-right:8px">'+new Date().toLocaleTimeString()+"</span>"+msg;
+  var pf = document.getElementById("pf"), pp = document.getElementById("pp"), lb = document.getElementById("lb");
+  pf.style.width = pct + "%";
+  if (pct >= 100) pf.classList.add("done");
+  pp.textContent = pct + "%";
+  document.querySelectorAll(".ll.new").forEach(function(l) { l.classList.remove("new"); });
+  var l = document.createElement("div");
+  l.className = "ll new";
+  l.innerHTML = '<span style="opacity:.5;margin-right:8px">' + new Date().toLocaleTimeString() + "</span>" + msg;
   lb.appendChild(l);
-  lb.scrollTop=lb.scrollHeight;
+  lb.scrollTop = lb.scrollHeight;
 }
 
+// ── Search ────────────────────────────────────────────────────────────────────
+
 async function runSearch() {
-  var titles = document.getElementById("q-titles").value.trim().split(",").map(function(x){return x.trim();}).filter(Boolean);
-  var locs = document.getElementById("q-locs").value.trim().split(",").map(function(x){return x.trim();}).filter(Boolean);
-  var org = document.getElementById("q-orglocs").value.trim().split(",").map(function(x){return x.trim();}).filter(Boolean);
-  var lang = document.getElementById("q-langs").value.trim().split(",").map(function(x){return x.trim();}).filter(Boolean);
-  var edu = document.getElementById("q-edu").value.trim().split(",").map(function(x){return x.trim();}).filter(Boolean);
+  var titles = document.getElementById("q-titles").value.trim().split(",").map(function(x) { return x.trim(); }).filter(Boolean);
+  var locs = document.getElementById("q-locs").value.trim().split(",").map(function(x) { return x.trim(); }).filter(Boolean);
+  var org = document.getElementById("q-orglocs").value.trim().split(",").map(function(x) { return x.trim(); }).filter(Boolean);
+  var lang = document.getElementById("q-langs").value.trim().split(",").map(function(x) { return x.trim(); }).filter(Boolean);
+  var edu = document.getElementById("q-edu").value.trim().split(",").map(function(x) { return x.trim(); }).filter(Boolean);
   var n = parseInt(document.getElementById("q-n").value);
-  if (!titles.length||!locs.length) { notif("Fill in titles and locations",true); return; }
-  var btn=document.getElementById("sbtn");
-  btn.disabled=true; btn.textContent="Running...";
-  document.getElementById("prog-area").style.display="block";
-  document.getElementById("lb").innerHTML="";
+
+  // cache for replacement fetching
+  titles_cache = titles; locs_cache = locs; org_cache = org; lang_cache = lang; edu_cache = edu;
+
+  if (!titles.length || !locs.length) { notif("Fill in titles and locations", true); return; }
+
+  var btn = document.getElementById("sbtn");
+  btn.disabled = true; btn.textContent = "Running...";
+  document.getElementById("prog-area").style.display = "block";
+  document.getElementById("lb").innerHTML = "";
   document.getElementById("pf").classList.remove("done");
-  log("Searching ["+titles.slice(0,2).join(", ")+"] in ["+locs.slice(0,2).join(", ")+"]...",10);
-  var res=[], page=1, maxPages=10;
+
+  // build dedup sets from existing prospects
   var existingKeys = new Set(prox.map(dedupKey));
-  // also index by first+last name for pre-enrichment matching
-  var existingNames = new Set(prox.map(function(p){ return p.name.toLowerCase().trim(); }));
+  var existingNames = new Set(prox.map(function(p) { return p.name.toLowerCase().trim(); }));
+
+  var res = [], page = 1, maxPages = 10;
   try {
-    while(res.length < n && page <= maxPages) {
-      var payload={person_titles:titles,person_locations:locs,per_page:25,page:page};
-      if(org.length)payload.organization_locations=org;
-      if(lang.length)payload.languages=lang;
-      if(edu.length)payload.person_education_locations=edu;
-      var d = await px("search",payload);
-      if(d.error){log("Apollo error: "+JSON.stringify(d.error),30);break;}
-      var batch = d.people||[];
-      if(!batch.length){log("No more results from Apollo at page "+page,30);break;}
-      var fresh = batch.filter(function(r){
-        var nameKey = ((r.first_name||"")+" "+(r.last_name||"")).toLowerCase().trim();
-        var emailKey = r.email&&r.email!=="Not available"?r.email.toLowerCase().trim():null;
-        var alreadyByName = existingNames.has(nameKey);
-        var alreadyByEmail = emailKey && existingKeys.has(emailKey);
-        return !alreadyByName && !alreadyByEmail;
+    while (res.length < n && page <= maxPages) {
+      var payload = { person_titles: titles, person_locations: locs, per_page: 25, page: page };
+      if (org.length) payload.organization_locations = org;
+      if (lang.length) payload.languages = lang;
+      if (edu.length) payload.person_education_locations = edu;
+      var d = await px("search", payload);
+      if (d.error) { log("Apollo error: " + JSON.stringify(d.error), 30); break; }
+      var batch = d.people || [];
+      if (!batch.length) { log("No more results from Apollo at page " + page, 30); break; }
+      var fresh = batch.filter(function(r) {
+        var nk = ((r.first_name || "") + " " + (r.last_name || "")).toLowerCase().trim();
+        var ek = r.email && r.email !== "Not available" ? r.email.toLowerCase().trim() : null;
+        return !existingNames.has(nk) && (!ek || !existingKeys.has(ek));
       });
-      log("Apollo page "+page+": "+fresh.length+" new of "+batch.length+" ("+res.length+"/"+n+" collected so far)",30);
+      log("Apollo page " + page + ": " + fresh.length + " new of " + batch.length + " (" + res.length + "/" + n + " collected)", 30);
       res = res.concat(fresh);
-      if(batch.length < 25){log("Reached end of Apollo results",30);break;}
+      if (batch.length < 25) { log("Reached end of Apollo results", 30); break; }
+      if (res.length >= n) break;
       page++;
-      await new Promise(function(r){setTimeout(r,400);});
+      await new Promise(function(r) { setTimeout(r, 400); });
     }
-  } catch(e){log("Connection error: "+e.message,30);}
+  } catch(e) { log("Connection error: " + e.message, 30); }
+
   res = res.slice(0, n);
-  if(!res.length){log("No new results — try broader criteria or different locations",100);btn.disabled=false;btn.textContent="Search + generate messages";return;}
-  var crit={org:org,lang:lang,edu:edu};
-  var hasExp=org.length>0||lang.length>0||edu.length>0;
-  var newp=[], filtered=0;
-  for(var i=0;i<res.length;i++){
-    var r=res[i];
-    var fn=r.first_name||"";
-    log("Enriching "+fn+"...",30+Math.round((i+1)/res.length*30));
-    var en=await enrich(r);
+  if (!res.length) { log("No new results — try broader criteria or different locations", 100); btn.disabled = false; btn.textContent = "Search + generate messages"; return; }
 
+  var crit = { org: org, lang: lang, edu: edu };
+  var hasExp = org.length > 0 || lang.length > 0 || edu.length > 0;
+  var newp = [], filtered = 0;
+
+  for (var i = 0; i < res.length; i++) {
+    var r = res[i];
+    var fn = r.first_name || "";
+    log("Enriching " + fn + "...", 30 + Math.round((i + 1) / res.length * 30));
+
+    var en = await enrich(r);
     var fullname = en
-      ? ((en.first_name||fn)+" "+(en.last_name||r.last_name||"")).trim()
-      : (fn+" "+(r.last_name||"")).trim() || "Unknown";
+      ? ((en.first_name || fn) + " " + (en.last_name || r.last_name || "")).trim()
+      : (fn + " " + (r.last_name || "")).trim() || "Unknown";
 
-    // ── FIXED: try search result first, then enriched person, across all known fields ──
+    // post-enrichment dedup check
+    if (existingNames.has(fullname.toLowerCase().trim())) {
+      log("Skipping " + fullname + " (already in list)", 50);
+      filtered++;
+      continue;
+    }
+
     var email = extractEmail(r) || extractEmail(en);
 
-    var p={
-      id:Date.now()+i,
-      name:fullname,
-      title:r.title||(en?en.title:"")||"Executive",
-      company:(r.organization?r.organization.name:"")|| (en&&en.organization?en.organization.name:"")||"Unknown",
-      location:[r.city||(en?en.city:""),r.country||(en?en.country:"")].filter(Boolean).join(", "),
+    var p = {
+      id: Date.now() + i,
+      name: fullname,
+      title: r.title || (en ? en.title : "") || "Executive",
+      company: (r.organization ? r.organization.name : "") || (en && en.organization ? en.organization.name : "") || "Unknown",
+      location: [r.city || (en ? en.city : ""), r.country || (en ? en.country : "")].filter(Boolean).join(", "),
       email: email || "Not available",
-      signal:r.headline||(en?en.headline:"")||"",
-      status:"Pending",
-      _r:r
+      signal: r.headline || (en ? en.headline : "") || "",
+      status: "Pending",
+      _r: r
     };
 
-    var emailStatus = email ? "✓ "+email : "⚠ no email found";
-    if(hasExp){
-      var ok=await filterOk(p,crit,r,en);
-      if(!ok){filtered++;log("Filtered: "+fullname,60+Math.round((i+1)/res.length*10));continue;}
+    if (hasExp) {
+      var ok = await filterOk(p, crit, r, en);
+      if (!ok) { filtered++; log("Filtered: " + fullname, 60 + Math.round((i + 1) / res.length * 10)); continue; }
     }
-    var expatResult=hasExp?await scoreExpat(r):null;
-    p.expat=expatResult?expatResult.score:null;
-    p.expatReason=expatResult?expatResult.reason:null;
-    log((p.expat?"["+p.expat+"] ":"")+"Generating email for "+fullname+" — "+emailStatus+(p.expatReason?" · "+p.expatReason:""),65+Math.round((i+1)/res.length*30));
-    p.msg=await genEmail(p);
+
+    var expatResult = hasExp ? await scoreExpat(r) : null;
+    p.expat = expatResult ? expatResult.score : null;
+    p.expatReason = expatResult ? expatResult.reason : null;
+
+    var emailStatus = email ? "✓ " + email : "⚠ no email";
+    log((p.expat ? "[" + p.expat + "] " : "") + "Generating email for " + fullname + " — " + emailStatus + (p.expatReason ? " · " + p.expatReason : ""), 65 + Math.round((i + 1) / res.length * 30));
+
+    p.msg = await genEmail(p);
+
+    // add to dedup sets so we don't add the same person twice within this batch
+    existingNames.add(fullname.toLowerCase().trim());
+    if (email) existingKeys.add(email.toLowerCase().trim());
+
     newp.push(p);
-    await new Promise(function(r){setTimeout(r,200);});
+    await new Promise(function(r) { setTimeout(r, 200); });
   }
-  if(filtered>0)log("Filtered out "+filtered+" prospects",97);
-  log("Done — "+newp.length+" prospects ready",100);
+
+  if (filtered > 0) log("Filtered/skipped " + filtered + " prospects", 97);
+  log("Done — " + newp.length + " new prospects ready", 100);
+
   newp.forEach(function(p) { prox.push(p); });
   saveProspects();
   upStats();
-  btn.disabled=false; btn.textContent="Search + generate messages";
+  btn.disabled = false; btn.textContent = "Search + generate messages";
   go("prospects");
-  notif(newp.length+" prospects ready for review");
+  notif(newp.length + " prospects ready for review");
 }
 
+// ── Manual add ────────────────────────────────────────────────────────────────
+
 async function addManual() {
-  var name=document.getElementById("mn").value.trim();
-  var email=document.getElementById("me").value.trim();
-  if(!name||!email){notif("Name and email required",true);return;}
-  var btn=document.getElementById("mbtn");
-  btn.textContent="Generating..."; btn.disabled=true;
-  var p={id:Date.now(),name:name,email:email,title:document.getElementById("mt").value.trim()||"Executive",company:document.getElementById("mc").value.trim()||"Unknown",location:document.getElementById("ml").value.trim()||"",signal:document.getElementById("ma").value.trim(),status:"Pending"};
-  p.msg=await genEmail(p);
+  var name = document.getElementById("mn").value.trim();
+  var email = document.getElementById("me").value.trim();
+  if (!name || !email) { notif("Name and email required", true); return; }
+  var btn = document.getElementById("mbtn");
+  btn.textContent = "Generating..."; btn.disabled = true;
+  var p = {
+    id: Date.now(), name: name, email: email,
+    title: document.getElementById("mt").value.trim() || "Executive",
+    company: document.getElementById("mc").value.trim() || "Unknown",
+    location: document.getElementById("ml").value.trim() || "",
+    signal: document.getElementById("ma").value.trim(),
+    status: "Pending"
+  };
+  p.msg = await genEmail(p);
   prox.push(p);
   upStats();
   saveProspects();
-  document.getElementById("mf").style.display="none";
-  ["mn","me","mt","mc","ml","ma"].forEach(function(id){document.getElementById(id).value="";});
-  btn.textContent="Generate email + add"; btn.disabled=false;
+  document.getElementById("mf").style.display = "none";
+  ["mn", "me", "mt", "mc", "ml", "ma"].forEach(function(id) { document.getElementById(id).value = ""; });
+  btn.textContent = "Generate email + add"; btn.disabled = false;
   render();
   notif("Prospect added");
 }
 
-function notif(msg,err){
-  var el=document.createElement("div");
-  el.className="notif "+(err?"ne":"ns");
-  el.textContent=msg;
+// ── Notifications ─────────────────────────────────────────────────────────────
+
+function notif(msg, err) {
+  var el = document.createElement("div");
+  el.className = "notif " + (err ? "ne" : "ns");
+  el.textContent = msg;
   document.getElementById("na").appendChild(el);
-  setTimeout(function(){el.remove();},4000);
+  setTimeout(function() { el.remove(); }, 4000);
 }
 </script>
 </body>
